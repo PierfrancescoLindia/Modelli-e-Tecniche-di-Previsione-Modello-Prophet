@@ -43,7 +43,7 @@ if (!dir.exists("output")) dir.create("output")
 # 1. IMPORTAZIONE DEL DATASET
 ############################################################
 
-walmart <- read_csv("data/wallmart_sales.csv")
+walmart <- read_csv("wallmart_sales.csv")
 
 
 ############################################################
