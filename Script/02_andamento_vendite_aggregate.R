@@ -44,7 +44,7 @@ library(scales)
 
 # Carichiamo il dataset.
 # Si assume una struttura di progetto con il file CSV nella cartella data/.
-walmart <- read_csv("data/wallmart_sales.csv")
+walmart <- read_csv("wallmart_sales.csv")
 
 # Controllo rapido del formato della data.
 # In questo dataset read_csv() la importa già correttamente come Date.
