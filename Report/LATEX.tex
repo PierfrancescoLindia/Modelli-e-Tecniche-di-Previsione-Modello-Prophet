@@ -1,0 +1,597 @@
+\documentclass[a4paper,12pt]{article}
+
+% Codifica e lingua
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[italian]{babel}
+\usepackage{lmodern}
+
+% Matematica e simboli
+\usepackage{amsmath,amssymb}
+
+% Figure e tabelle
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{caption}
+
+% Impaginazione e stile
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+
+\geometry{margin=2.5cm}
+\onehalfspacing
+
+\title{Progetto di Modelli e Tecniche di Previsione}
+\author{Pierfrancesco Lindia}
+\date{Aprile 2026}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Introduzione}
+
+Il presente progetto si inserisce nel quadro metodologico proposto da Taylor e Letham nel paper \textit{Forecasting at Scale}, nel quale il problema della previsione viene affrontato come un processo che combina modellazione flessibile, interpretabilità e valutazione sistematica delle performance. In tale prospettiva, il forecasting non viene considerato come la semplice applicazione automatica di un algoritmo, ma come un percorso che richiede una conoscenza approfondita della struttura della serie temporale, delle sue componenti e delle eventuali criticità presenti nei dati.
+
+Coerentemente con questa impostazione, il lavoro qui sviluppato ha come obiettivo l’analisi del dataset \textit{Walmart Sales}, costituito da vendite settimanali osservate per diversi punti vendita e dipartimenti. Prima di procedere con la costruzione e il confronto dei modelli previsivi, è stato ritenuto necessario sviluppare una fase di analisi esplorativa dei dati, finalizzata a comprendere la struttura del dataset, l’orizzonte temporale disponibile, il livello di granularità delle osservazioni e la presenza di eventuali anomalie. Tale passaggio è essenziale perché le scelte relative ai modelli, al livello di aggregazione e alla strategia di validazione devono poggiare su una conoscenza solida del dato.
+
+\subsection{Struttura del dataset}
+
+La prima fase dell’analisi è stata dedicata alla comprensione della struttura del dataset \textit{Walmart Sales}, con l’obiettivo di verificare se la base informativa fosse coerente con un problema di forecasting e di individuare fin da subito eventuali criticità. In un’analisi previsiva, infatti, la semplice disponibilità di osservazioni nel tempo non è sufficiente: è necessario chiarire l’unità di osservazione, il livello di granularità del dato, l’orizzonte temporale coperto e la qualità complessiva del dataset. Per questa ragione, prima di studiare l’andamento delle vendite, è stato opportuno concentrarsi sulle sue caratteristiche strutturali.
+
+L’importazione del file in \texttt{R} è avvenuta correttamente mediante la funzione \texttt{read\_csv()}, che ha riconosciuto in modo appropriato la tipologia delle variabili. Il dataset risulta composto da cinque colonne: \texttt{Store}, \texttt{Dept}, \texttt{Date}, \texttt{Weekly\_Sales} e \texttt{IsHoliday}. Le prime due identificano rispettivamente il punto vendita e il dipartimento merceologico, \texttt{Date} rappresenta la settimana di osservazione, \texttt{Weekly\_Sales} costituisce la variabile di interesse, mentre \texttt{IsHoliday} segnala se la settimana considerata coincide con una festività. Ne consegue che ogni riga del dataset rappresenta il valore delle vendite settimanali di uno specifico dipartimento all’interno di un determinato store, osservato in una precisa settimana. Il dataset assume quindi una struttura di tipo panel-temporale, nella quale coesistono molte serie storiche distinte.
+
+Le principali informazioni strutturali emerse dall’analisi iniziale sono sintetizzate nella Tabella~\ref{tab:struttura_dataset}.
+
+\begin{table}[H]
+\centering
+\caption{Principali caratteristiche strutturali del dataset Walmart Sales}
+\label{tab:struttura_dataset}
+\begin{tabular}{lc}
+\toprule
+\textbf{Indicatore} & \textbf{Valore} \\
+\midrule
+Numero di osservazioni & 421570 \\
+Numero di variabili & 5 \\
+Data iniziale & 2010-02-05 \\
+Data finale & 2012-10-26 \\
+Numero di settimane osservate & 143 \\
+Numero di store & 45 \\
+Numero di department & 81 \\
+Numero di serie Store--Dept & 3331 \\
+Valori mancanti & 0 \\
+Righe duplicate & 0 \\
+Vendite nulle & 73 \\
+Vendite negative & 1285 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Come si osserva dalla Tabella~\ref{tab:struttura_dataset}, il dataset contiene \textbf{421570 osservazioni} e copre un intervallo temporale compreso tra il \textbf{5 febbraio 2010} e il \textbf{26 ottobre 2012}, per un totale di \textbf{143 settimane}. Tale estensione temporale risulta adeguata per uno studio delle vendite a frequenza settimanale, poiché consente di osservare l’evoluzione del fenomeno lungo più annualità e di verificare successivamente la presenza di trend, pattern stagionali e possibili effetti associati alle festività.
+
+Dal punto di vista della composizione interna, il dataset include \textbf{45 store} e \textbf{81 department}, che danno luogo a \textbf{3331 combinazioni Store--Dept}. Questo risultato è particolarmente rilevante in ottica previsiva, poiché mostra fin dall’inizio che il problema può essere affrontato a diversi livelli di aggregazione: sulle vendite complessive, sulle vendite per store, per department oppure al livello più granulare di singola coppia store-dipartimento. La ricchezza informativa del dataset costituisce quindi un punto di forza, ma introduce anche una prima complessità metodologica, dal momento che le serie elementari potrebbero presentare caratteristiche molto diverse tra loro.
+
+Un aspetto particolarmente favorevole riguarda la qualità formale del dato. Non sono infatti presenti valori mancanti, né risultano righe duplicate o ripetizioni sulla chiave logica \texttt{Store--Dept--Date}. Questo significa che ogni combinazione di punto vendita, dipartimento e settimana compare una sola volta nel dataset, garantendo coerenza nelle aggregazioni e nelle elaborazioni successive. Da questo punto di vista, la base dati appare pulita e ben organizzata, caratteristica che rende più affidabile l’intera fase esplorativa.
+
+Accanto a questi elementi positivi, l’analisi preliminare della variabile \texttt{Weekly\_Sales} ha evidenziato alcune caratteristiche che meritano attenzione. In particolare, i valori osservati risultano compresi tra \textbf{-4989} e \textbf{693099}, con una \textbf{mediana pari a 7612} e una \textbf{media pari a circa 15981}. La differenza tra media e mediana, insieme all’ampiezza dell’intervallo osservato, suggerisce già una distribuzione fortemente dispersa e probabilmente asimmetrica. Inoltre, sono presenti \textbf{73 osservazioni con vendite uguali a zero} e \textbf{1285 osservazioni con vendite negative}. In un contesto di vendite, tali valori non possono essere ignorati, poiché potrebbero riflettere resi, rettifiche contabili oppure anomalie di registrazione. Pur non compromettendo la qualità complessiva del dataset, essi indicano la necessità di dedicare un’analisi specifica alla presenza di outlier e valori anomali nelle sezioni successive.
+
+Anche la variabile \texttt{IsHoliday} risulta potenzialmente rilevante. Le osservazioni riferite a settimane festive rappresentano circa il \textbf{7,04\%} del totale, mentre il restante \textbf{92,96\%} appartiene a settimane non festive. Questa distribuzione era attesa, ma conferma che il dataset contiene un’informazione esplicita sulle festività che potrà essere sfruttata nelle fasi successive per verificare se tali settimane siano associate a pattern di vendita sistematicamente differenti rispetto alle altre.
+
+Un’ulteriore verifica ha riguardato la regolarità della struttura del dataset nel tempo e nelle sue unità elementari. Il numero di osservazioni per settimana risulta relativamente stabile, con valori compresi tra \textbf{2896} e \textbf{3027}, segnalando una buona copertura temporale. Tuttavia, la lunghezza delle singole serie \texttt{Store--Dept} non è uniforme: molte combinazioni coprono tutte le \textbf{143 settimane} disponibili, ma il minimo osservato è pari a \textbf{1}, mentre la media si attesta a circa \textbf{126,6 settimane}. Questo implica che non tutte le serie elementari sono complete e che alcune risultano presenti solo in una parte limitata dell’orizzonte temporale considerato.
+
+Nel complesso, l’analisi della struttura del dataset consente di formulare una valutazione positiva, pur mettendo in evidenza alcuni aspetti che influenzeranno le scelte successive. Il dataset \textit{Walmart Sales} si presenta come una base dati ampia, coerente e priva di criticità formali rilevanti, adatta a uno studio di forecasting. Allo stesso tempo, la presenza di molte serie distinte, la non uniformità della loro lunghezza e l’esistenza di valori nulli o negativi suggeriscono che il problema previsivo non potrà essere affrontato in modo puramente meccanico, ma richiederà scelte motivate sul livello di aggregazione e sul trattamento delle anomalie. Questa fase preliminare fornisce quindi il quadro necessario per passare all’analisi dell’andamento temporale delle vendite aggregate, che rappresenta il primo passo per comprendere la dinamica complessiva del fenomeno.
+
+
+\subsection{Andamento temporale delle vendite aggregate}
+
+Dopo aver esaminato la struttura del dataset, il passo successivo è consistito nello studio dell’andamento complessivo delle vendite nel tempo. Questa analisi è stata svolta aggregando, per ciascuna settimana, tutte le osservazioni presenti nel dataset, così da costruire una singola serie temporale capace di descrivere il comportamento generale del sistema Walmart. Tale scelta risponde a una precisa esigenza metodologica: prima di scendere al livello dei singoli store o department, è opportuno comprendere la dinamica aggregata del fenomeno, in modo da individuare eventuali regolarità, fasi di instabilità e settimane eccezionali che potrebbero influenzare la successiva modellazione.
+
+L’aggregazione per data ha prodotto una serie composta da \textbf{143 osservazioni settimanali}, coerenti con l’orizzonte temporale già individuato nella fase precedente, compreso tra il \textbf{5 febbraio 2010} e il \textbf{26 ottobre 2012}. Le prime settimane della serie mostrano livelli di vendita aggregata prossimi ai \textbf{50 milioni}, mentre nella parte finale del campione i valori si mantengono generalmente compresi tra \textbf{44} e \textbf{48 milioni}. Già da questa prima evidenza emerge che il sistema Walmart presenta un volume complessivo di vendite molto elevato, con oscillazioni settimanali significative ma all’interno di un ordine di grandezza relativamente stabile.
+
+Per sintetizzare i principali indicatori descrittivi della serie aggregata, si riporta la Tabella~\ref{tab:vendite_aggregate_descrittive}.
+
+\begin{table}[H]
+\centering
+\caption{Statistiche descrittive delle vendite aggregate settimanali}
+\label{tab:vendite_aggregate_descrittive}
+\begin{tabular}{lc}
+\toprule
+\textbf{Statistica} & \textbf{Valore} \\
+\midrule
+Numero di settimane & 143 \\
+Media & 47\,113\,419 \\
+Mediana & 46\,243\,900 \\
+Deviazione standard & 5\,444\,206 \\
+Minimo & 39\,599\,853 \\
+Massimo & 80\,931\,416 \\
+Primo quartile & 44\,880\,588 \\
+Terzo quartile & 47\,792\,025 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Le statistiche riportate nella Tabella~\ref{tab:vendite_aggregate_descrittive} consentono di formulare alcune prime considerazioni. In primo luogo, la differenza relativamente contenuta tra media e mediana suggerisce che, per buona parte del campione, le vendite aggregate si collochino attorno a un livello centrale abbastanza definito, poco superiore ai \textbf{46 milioni}. In secondo luogo, la deviazione standard, pari a circa \textbf{5,4 milioni}, segnala una variabilità non trascurabile, che tuttavia non appare sufficiente, da sola, a descrivere l’effettiva struttura della serie. Il confronto tra valore minimo e massimo mostra infatti un’escursione molto ampia, dovuta alla presenza di alcune settimane eccezionali che si discostano nettamente dal comportamento ordinario.
+
+L’andamento complessivo della serie è riportato in Figura~\ref{fig:vendite_aggregate_linea}. Il grafico evidenzia che, per gran parte dell’orizzonte osservato, le vendite aggregate oscillano attorno a un livello abbastanza regolare, generalmente compreso tra \textbf{43} e \textbf{50 milioni}. Tuttavia, emergono con grande evidenza alcuni picchi molto pronunciati, concentrati soprattutto nella parte finale del 2010 e del 2011, che interrompono la regolarità del profilo e suggeriscono la presenza di eventi ricorrenti di forte intensità.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 190330.png}
+    \caption{Andamento temporale delle vendite aggregate settimanali.}
+    \label{fig:placeholder}
+\end{figure}
+
+La rappresentazione con linea e punti, riportata in Figura~\ref{fig:vendite_aggregate_punti}, consente di leggere con maggiore precisione la natura discreta delle osservazioni. Ogni punto rappresenta una settimana e rende più evidente la presenza di oscillazioni di breve periodo, oltre a confermare che i picchi osservati non costituiscono una tendenza persistente, bensì episodi circoscritti nel tempo. Questa distinzione è importante, poiché in ottica previsiva occorre separare il livello ordinario della serie da variazioni eccezionali che potrebbero dipendere da festività o eventi particolari.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 190346.png}
+    \caption{Vendite aggregate settimanali: rappresentazione con linea e punti.}    \label{fig:placeholder}
+\end{figure}
+
+Per rendere più leggibile il profilo di fondo della serie, è stata inoltre calcolata una media mobile a 4 settimane. Come mostrato in Figura~\ref{fig:vendite_aggregate_ma}, questo strumento di smoothing attenua la variabilità di breve periodo e permette di osservare con maggiore chiarezza la struttura generale dell’andamento. Il profilo smussato conferma che, al di fuori dei picchi estremi, la serie tende a oscillare attorno a un livello piuttosto stabile, senza evidenziare in questa fase una tendenza monotona chiaramente crescente o decrescente. Allo stesso tempo, la media mobile mette in risalto la concentrazione dei principali scostamenti in corrispondenza di alcune finestre temporali ben precise, che saranno successivamente analizzate in relazione alla stagionalità e agli effetti holiday.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 190358.png}
+    \caption{Vendite aggregate settimanali con media mobile a 4 settimane.}    \label{fig:placeholder}
+\end{figure}
+
+
+L’analisi dei valori estremi conferma in modo puntuale quanto osservato graficamente. La settimana con il livello massimo di vendite aggregate coincide con il \textbf{24 dicembre 2010}, in cui il totale raggiunge \textbf{80\,931\,416}. Al contrario, il valore minimo si registra il \textbf{28 gennaio 2011}, con un totale di \textbf{39\,599\,853}. Il fatto che il massimo si collochi immediatamente prima del periodo natalizio suggerisce già una possibile connessione con fattori stagionali e con l’aumento delle vendite in corrispondenza delle festività di fine anno. Analogamente, il minimo osservato nelle settimane successive potrebbe riflettere un fisiologico riassorbimento della domanda dopo i picchi del periodo festivo.
+
+Per comprendere meglio la dinamica degli shock settimanali, sono state calcolate anche le variazioni assolute e percentuali delle vendite rispetto alla settimana precedente. I risultati mostrano che i cambiamenti più intensi si concentrano ancora una volta tra novembre e dicembre. In particolare, la variazione più ampia in valore assoluto si osserva il \textbf{31 dicembre 2010}, quando le vendite aggregate diminuiscono di circa \textbf{40,5 milioni} rispetto alla settimana precedente, corrispondenti a una contrazione del \textbf{50\%}. All’opposto, tra le variazioni positive più rilevanti figurano il \textbf{26 novembre 2010} e il \textbf{25 novembre 2011}, entrambe caratterizzate da incrementi superiori ai \textbf{20 milioni}. Questi movimenti suggeriscono chiaramente che la serie è influenzata da eventi calendariali ricorrenti, e che le oscillazioni più forti non sono casuali ma concentrate in periodi economicamente sensibili.
+
+La distribuzione delle variazioni settimanali è riportata in Figura~\ref{fig:variazioni_settimanali}. Il grafico mostra che, per la maggior parte delle settimane, gli scostamenti rispetto al periodo precedente sono relativamente contenuti. Tuttavia, in corrispondenza di alcune date specifiche si osservano barre di ampiezza nettamente superiore, sia in positivo sia in negativo. Questa evidenza rafforza l’idea che la serie presenti una struttura di base relativamente stabile, interrotta però da shock di forte intensità che meritano un’attenzione dedicata nella fase interpretativa e modellistica.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 190415.png}
+    \caption{Variazione assoluta delle vendite aggregate rispetto alla settimana precedente.}    \label{fig:placeholder}
+\end{figure}
+
+
+
+Nel complesso, l’analisi dell’andamento aggregato consente di trarre alcune indicazioni rilevanti. In primo luogo, la serie presenta un livello medio elevato e relativamente stabile lungo l’orizzonte osservato. In secondo luogo, non emergono ancora evidenze definitive di un trend di lungo periodo particolarmente marcato, mentre risultano molto evidenti alcune settimane eccezionali che alterano sensibilmente il profilo della serie. Infine, la concentrazione dei principali picchi e delle principali cadute in corrispondenza della parte finale dell’anno suggerisce che la dinamica delle vendite aggregate sia fortemente influenzata da componenti stagionali e da effetti associati alle festività. Per questa ragione, il passo successivo dell’analisi consiste nell’approfondire il tema del trend e dei possibili cambi di regime, così da distinguere con maggiore precisione i movimenti di fondo della serie dalle oscillazioni ricorrenti di natura calendariale.
+
+
+
+
+
+
+
+
+
+\subsection{Trend e possibili cambi di regime}
+
+Una volta costruita la serie aggregata delle vendite settimanali, il passo successivo consiste nell’analizzarne la componente di trend, con l’obiettivo di verificare se il livello medio delle vendite presenti una direzione di fondo stabile oppure se emergano fasi differenti nel corso del tempo. In un problema di forecasting questo passaggio è particolarmente rilevante, poiché la natura del trend condiziona in modo diretto la scelta dei modelli previsivi: una dinamica sostanzialmente piatta richiede strumenti diversi rispetto a una serie caratterizzata da crescita persistente, decrescita strutturale o cambiamenti di regime.
+
+La Figura~\ref{fig:trend_base} mostra la serie aggregata delle vendite Walmart lungo l’intero orizzonte campionario. La prima evidenza che emerge è l’assenza di una traiettoria monotona chiaramente crescente o decrescente. La serie oscilla per gran parte del periodo attorno a un livello compreso approssimativamente tra 44 e 48 milioni di dollari, con due episodi di forte espansione localizzati nella parte finale del 2010 e del 2011. Questi picchi raggiungono valori superiori a 80 milioni nel 2010 e a 76 milioni nel 2011, per poi essere seguiti da rapide correzioni verso livelli prossimi ai 40 milioni. Il comportamento osservato suggerisce quindi che la componente di fondo della serie non sia dominata da un trend lineare di lungo periodo, bensì da oscillazioni relativamente contenute intervallate da shock di elevata intensità.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 191713.png}
+    \caption{Serie Aggregata delle Vendite di Walmart}
+    \label{fig:placeholder}
+\end{figure}
+Per isolare il profilo di fondo della serie dalla variabilità di breve periodo, sono state calcolate due medie mobili, rispettivamente a 4 e a 12 settimane. La scelta di queste finestre temporali risponde a un’esigenza descrittiva: la media mobile a 4 settimane consente di attenuare le oscillazioni più brevi mantenendo una buona sensibilità ai movimenti locali, mentre quella a 12 settimane fornisce una lettura più regolare della dinamica sottostante. Come mostrato in Figura~\ref{fig:trend_ma}, entrambe le curve confermano che il comportamento di fondo della serie rimane relativamente stabile nella maggior parte del campione. Le impennate di fine 2010 e fine 2011 si riflettono in rialzi marcati anche delle medie mobili, ma tali aumenti si riassorbono rapidamente nelle settimane successive. In termini tecnici, ciò suggerisce che i picchi osservati abbiano natura temporanea e non modifichino in modo persistente il livello medio della serie.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 191755.png}
+    \caption{Serie aggregata con medie mobili a 4 e 12 settimane.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+A supporto di questa evidenza, è stata introdotta anche una retta di tendenza lineare, utilizzata non come modello finale, ma come riferimento sintetico per valutare la direzione media della serie. La Figura~\ref{fig:trend_linear} mostra che la pendenza stimata è molto contenuta e sostanzialmente compatibile con una dinamica quasi stazionaria nel livello medio. In altre parole, il fitting lineare non evidenzia una componente deterministica di crescita o riduzione di lungo periodo sufficientemente marcata da dominare il comportamento della serie. Questo risultato è coerente con l’ispezione visiva della serie originale: la variabilità osservata è spiegata più da fluttuazioni locali e da settimane eccezionali che da una tendenza lineare persistente.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 191827.png}
+    \caption{Serie aggregata con trend lineare di riferimento.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+
+Per ottenere una rappresentazione più flessibile dell’andamento di fondo, è stato poi applicato uno smoothing non parametrico di tipo LOESS. Questa scelta consente di superare la rigidità della retta lineare e di cogliere eventuali cambiamenti graduali nel livello medio della serie. La Figura~\ref{fig:trend_loess} evidenzia che il profilo stimato dal LOESS presenta alcune fasi distinguibili: un moderato indebolimento nella prima parte del campione, un incremento accentuato in prossimità della fine del 2010, una successiva correzione nel corso del 2011 e un nuovo rialzo verso la fine del 2011, seguito ancora una volta da un riassorbimento nel 2012. La forma della curva suggerisce quindi che la serie non sia ben descritta da un unico trend globale, ma da movimenti locali che possono essere interpretati come cambiamenti temporanei di regime. Tuttavia, tali variazioni appaiono strettamente collegate ai picchi di fine anno e non a una trasformazione permanente della dinamica di fondo.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 191859.png}
+    \caption{Serie aggregata con smoothing LOESS.}
+    \label{fig:placeholder}
+\end{figure}
+
+Per verificare in modo sintetico se il livello medio delle vendite tenda a modificarsi tra l’inizio e la fine del campione, è stato confrontato il valore medio delle prime 12 settimane con quello delle ultime 12 settimane osservate. Il confronto mostra una media pari a \textbf{46\,663\,336} nelle prime 12 settimane e a \textbf{46\,197\,674} nelle ultime 12 settimane. La differenza risulta quindi modesta, inferiore a 500 mila unità in valore assoluto, e suggerisce che il livello medio delle vendite aggregate sia rimasto sostanzialmente stabile nel periodo considerato. Questo risultato rafforza l’interpretazione secondo cui la serie non presenta una deriva strutturale di lungo periodo chiaramente pronunciata.
+
+Un ulteriore riscontro proviene dal confronto per anno, riportato nella Tabella~\ref{tab:yearly_summary}. La media delle vendite aggregate passa da circa \textbf{47,69 milioni} nel 2010 a \textbf{47,08 milioni} nel 2011, fino a \textbf{46,51 milioni} nel 2012. Anche in questo caso si osserva una lieve tendenza decrescente, ma di ampiezza contenuta rispetto alla scala complessiva della serie. Inoltre, il massimo annuo del 2012 è sensibilmente più basso rispetto a quelli del 2010 e del 2011, elemento che riflette l’assenza, nell’ultimo anno del campione, di picchi comparabili a quelli registrati nelle due annualità precedenti.
+
+\begin{table}[H]
+\centering
+\caption{Sintesi annuale delle vendite aggregate}
+\label{tab:yearly_summary}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Anno} & \textbf{Media} & \textbf{Mediana} & \textbf{Minimo} & \textbf{Massimo} \\
+\midrule
+2010 & 47\,685\,128 & 46\,184\,350 & 40\,432\,519 & 80\,931\,416 \\
+2011 & 47\,080\,769 & 45\,964\,964 & 39\,599\,853 & 76\,998\,241 \\
+2012 & 46\,514\,718 & 46\,823\,939 & 39\,834\,975 & 53\,502\,316 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Se la dinamica di fondo appare quindi relativamente stabile, la serie presenta comunque variazioni settimanali molto marcate in alcune date specifiche. Per misurare questi movimenti sono state calcolate le differenze assolute e percentuali rispetto alla settimana precedente. Le dieci variazioni più intense mostrano una chiara concentrazione tra novembre e dicembre. In particolare, la caduta più forte si verifica il \textbf{31 dicembre 2010}, con una riduzione di circa \textbf{40,5 milioni} rispetto alla settimana precedente, pari a una variazione del \textbf{-50\%}. Analogamente, il \textbf{30 dicembre 2011} si osserva una contrazione di circa \textbf{30,96 milioni}, corrispondente a \textbf{-40,2\%}. Sul lato opposto, le settimane del \textbf{26 novembre 2010} e del \textbf{25 novembre 2011} registrano gli incrementi più elevati, superiori ai \textbf{20 milioni}, mentre il \textbf{24 dicembre 2010} e il \textbf{23 dicembre 2011} presentano ulteriori forti rialzi.
+
+La Figura~\ref{fig:trend_changes} rende evidente la natura di queste discontinuità. Per gran parte del campione le variazioni settimanali restano contenute, mentre in corrispondenza di poche date si osservano scostamenti eccezionali sia in positivo sia in negativo. Questo comportamento è coerente con la presenza di shock calendariali molto intensi, probabilmente associati alle festività di fine anno e ad altri eventi ricorrenti della domanda. Da un punto di vista tecnico, tali movimenti non suggeriscono necessariamente l’esistenza di un cambiamento strutturale permanente della serie, ma piuttosto la presenza di rotture locali e ripetute che devono essere trattate esplicitamente nella modellazione.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 191938.png}
+    \caption{Variazioni assolute delle vendite aggregate rispetto alla settimana precedente.}    \label{fig:placeholder}
+\end{figure}
+
+
+Nel complesso, l’analisi del trend e dei possibili cambi di regime porta a una conclusione piuttosto chiara. La serie aggregata delle vendite Walmart non mostra un trend lineare di lungo periodo particolarmente marcato; il livello medio delle vendite rimane infatti relativamente stabile tra l’inizio e la fine del campione, con una lieve flessione nel corso delle annualità considerate. Tuttavia, tale apparente stabilità è interrotta da episodi ricorrenti di forte intensità, concentrati soprattutto tra novembre e dicembre, che producono innalzamenti e cadute molto bruschi della serie. Pertanto, più che una sequenza di regimi permanenti distinti, i dati suggeriscono la presenza di una dinamica di fondo abbastanza regolare su cui si innestano shock temporanei, ampi e ricorrenti. Questa evidenza orienta naturalmente l’analisi successiva verso lo studio della stagionalità e degli effetti holiday, che appaiono i principali candidati per spiegare le principali discontinuità osservate nella serie aggregata.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\subsection{Stagionalità e holiday effect}
+
+Dopo aver esaminato il profilo di trend della serie aggregata, il passo successivo consiste nell’analizzare la presenza di componenti stagionali e di effetti associati alle settimane festive. In una serie di vendite settimanali, infatti, le oscillazioni osservate non dipendono soltanto da variazioni di livello o da shock isolati, ma possono riflettere pattern ricorrenti nel corso dell’anno. Dal punto di vista previsivo, identificare tali componenti è essenziale, perché la presenza di stagionalità sistematiche e di holiday effects implica la necessità di includere nel modello informazioni calendariali esplicite, coerentemente con l’impostazione del paper di riferimento.
+
+Per questa ragione, a partire dalla serie aggregata delle vendite settimanali, sono state costruite variabili temporali derivate — anno, mese e settimana dell’anno — così da poter confrontare periodi omogenei e studiare se il livello delle vendite presenti regolarità ricorrenti. La prima evidenza emerge dalle statistiche descrittive mensili, riportate nella Tabella~\ref{tab:monthly_summary}. I risultati mostrano che il livello medio delle vendite non è uniforme lungo l’anno: il mese con la media più bassa è \textbf{gennaio}, con circa \textbf{41,57 milioni}, mentre il mese con la media più elevata è \textbf{dicembre}, con circa \textbf{57,68 milioni}. Valori medi particolarmente elevati si osservano anche in \textbf{novembre}, pari a circa \textbf{51,63 milioni}. All’opposto, \textbf{settembre} e \textbf{ottobre} risultano tra i mesi mediamente più deboli, con livelli rispettivamente pari a circa \textbf{44,52} e \textbf{44,98 milioni}. 
+
+\begin{table}[H]
+\centering
+\caption{Statistiche descrittive delle vendite aggregate per mese}
+\label{tab:monthly_summary}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Mese} & \textbf{Media} & \textbf{Mediana} & \textbf{Minimo} & \textbf{Massimo} & \textbf{Dev. std.} \\
+\midrule
+Gennaio   & 41\,574\,805 & 41\,348\,378 & 39\,599\,853 & 44\,955\,422 & 1\,769\,353 \\
+Febbraio  & 47\,393\,991 & 47\,806\,593 & 43\,968\,571 & 50\,197\,057 & 2\,173\,601 \\
+Marzo     & 45\,598\,915 & 45\,272\,862 & 42\,876\,199 & 47\,480\,454 & 1\,364\,449 \\
+Aprile    & 46\,204\,270 & 45\,128\,098 & 43\,458\,991 & 53\,502\,316 & 2\,934\,246 \\
+Maggio    & 46\,427\,131 & 46\,842\,949 & 44\,046\,598 & 48\,503\,244 & 1\,352\,937 \\
+Giugno    & 47\,894\,607 & 47\,669\,735 & 45\,884\,095 & 50\,188\,543 & 1\,200\,486 \\
+Luglio    & 46\,428\,641 & 46\,079\,638 & 43\,683\,274 & 51\,253\,022 & 2\,075\,922 \\
+Agosto    & 47\,160\,785 & 47\,354\,452 & 45\,909\,740 & 48\,204\,999 &   653\,214 \\
+Settembre & 44\,520\,091 & 44\,226\,039 & 41\,358\,514 & 48\,330\,059 & 2\,054\,434 \\
+Ottobre   & 44\,983\,445 & 45\,122\,411 & 42\,239\,876 & 47\,566\,639 & 1\,622\,688 \\
+Novembre  & 51\,626\,966 & 47\,456\,603 & 45\,125\,584 & 66\,593\,605 & 9\,085\,789 \\
+Dicembre  & 57\,683\,864 & 55\,613\,959 & 40\,432\,519 & 80\,931\,416 & 12\,941\,362 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Questa struttura è rappresentata visivamente in Figura~\ref{fig:monthly_mean}. Il grafico delle medie mensili evidenzia una chiara asimmetria nel corso dell’anno: dopo un inizio relativamente debole in gennaio, le vendite si collocano su livelli intermedi per gran parte dei mesi primaverili ed estivi, per poi aumentare in modo marcato nel bimestre novembre--dicembre. Tale configurazione costituisce un primo segnale di stagionalità annuale, con un’intensificazione della domanda nella parte finale dell’anno.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 192724.png}
+    \caption{Confronto della stagionalità media mensile}
+    \label{fig:placeholder}
+\end{figure}
+
+Il semplice confronto tra medie, tuttavia, non è sufficiente per descrivere la struttura della stagionalità. Per questa ragione è stata analizzata anche la distribuzione mensile delle vendite mediante boxplot, riportata in Figura~\ref{fig:monthly_box}. Questa rappresentazione consente di valutare simultaneamente livello centrale, dispersione e presenza di osservazioni estreme. Il grafico mostra che \textbf{dicembre} è non solo il mese con il livello mediano più elevato, ma anche quello con la maggiore dispersione, con valori estremi che superano gli \textbf{80 milioni}. Anche \textbf{novembre} presenta una variabilità molto elevata e una distribuzione fortemente asimmetrica verso l’alto. Al contrario, mesi come \textbf{agosto}, \textbf{maggio} e \textbf{giugno} risultano molto più compatti, suggerendo una dinamica più regolare. Dal punto di vista interpretativo, questo significa che la componente stagionale non si manifesta solo come differenza nel livello medio, ma anche come diversa volatilità a seconda del periodo dell’anno.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 192804.png}
+    \caption{BoxPlot Mensile delle vendite settimanali aggregate}
+    \label{fig:placeholder}
+\end{figure}
+
+Per verificare se il profilo stagionale sia stabile da un anno all’altro, le vendite medie mensili sono state confrontate separatamente per ciascuna annualità del campione. La Figura~\ref{fig:monthly_year} mostra che, pur con differenze di livello contenute tra anni, la forma della stagionalità è sostanzialmente coerente. In tutte le annualità si osservano livelli relativamente bassi a gennaio, un recupero tra febbraio e giugno, una fase più debole tra settembre e ottobre e un’accelerazione netta negli ultimi due mesi dell’anno. In particolare, il forte incremento di novembre e dicembre si ripete in modo sistematico, suggerendo che non si tratti di un episodio isolato, ma di una componente stagionale strutturale della serie. Questa evidenza è molto importante ai fini previsivi, perché indica che la dinamica di fine anno è persistente e quindi modellabile.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 192935.png}
+    \caption{Profilo mensile delle vendite aggregate per anno.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+
+Una seconda dimensione dell’analisi riguarda l’effetto delle settimane festive. A questo scopo, la serie aggregata è stata suddivisa tra settimane \textit{holiday} e \textit{non-holiday}, confrontandone distribuzione e indicatori descrittivi. I risultati, riportati nella Tabella~\ref{tab:holiday_summary}, mostrano che le settimane festive presentano in media vendite pari a \textbf{50\,529\,955}, superiori a quelle delle settimane ordinarie, pari a \textbf{46\,856\,537}. La differenza assoluta è quindi di circa \textbf{3,67 milioni}, corrispondente a un incremento medio del \textbf{7,84\%}. Anche la mediana è più elevata nelle settimane festive, a conferma del fatto che l’effetto non dipende soltanto da poche osservazioni estreme, ma si riflette nel profilo centrale della distribuzione.
+
+\begin{table}[H]
+\centering
+\caption{Confronto tra settimane festive e non festive}
+\label{tab:holiday_summary}
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{Categoria} & \textbf{Media} & \textbf{Mediana} & \textbf{Minimo} & \textbf{Massimo} & \textbf{Dev. std.} & \textbf{N. settimane} \\
+\midrule
+Non-Holiday & 46\,856\,537 & 46\,128\,514 & 39\,599\,853 & 80\,931\,416 & 5\,083\,440 & 133 \\
+Holiday     & 50\,529\,955 & 47\,833\,126 & 40\,432\,519 & 66\,593\,605 & 8\,642\,457 & 10 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La differenza tra le due categorie risulta evidente anche nella Figura~\ref{fig:holiday_box}, che confronta graficamente le distribuzioni. Le settimane festive presentano una mediana più elevata e una dispersione maggiore rispetto alle settimane ordinarie. Ciò suggerisce che le festività non agiscono semplicemente come uno spostamento uniforme verso l’alto della serie, ma introducono anche una maggiore incertezza nei livelli di vendita, probabilmente perché eventi diversi generano effetti di intensità differente. In termini modellistici, questa evidenza è particolarmente rilevante: le holiday weeks sembrano costituire una componente autonoma della serie, con impatti non trascurabili sia sul livello medio sia sulla variabilità.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 193042.png}
+    \caption{Confronto tra settimane festive e non festive.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+
+Per comprendere meglio il ruolo delle festività, le settimane holiday sono state inoltre evidenziate direttamente sulla serie temporale aggregata, come mostrato in Figura~\ref{fig:holiday_time}. Questa rappresentazione rivela che molte settimane festive coincidono effettivamente con punti di discontinuità della serie, ma non sempre con i valori massimi assoluti. In particolare, tra le settimane con vendite più elevate compaiono il \textbf{25 novembre 2011} e il \textbf{26 novembre 2010}, entrambe classificate come holiday e caratterizzate da valori superiori a \textbf{65 milioni}. Tuttavia, i due massimi assoluti della serie, \textbf{24 dicembre 2010} e \textbf{23 dicembre 2011}, non risultano classificati come holiday nel dataset pur essendo chiaramente collocati in un contesto festivo. Questo punto è tecnicamente molto importante: la variabile \texttt{IsHoliday} cattura solo una parte degli effetti calendariali rilevanti, mentre altre settimane economicamente cruciali, pur non etichettate formalmente come festive, presentano pattern del tutto compatibili con una dinamica holiday-driven.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 193115.png}
+    \caption{Serie aggregata con evidenziazione delle settimane festive.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+
+L’analisi puntuale delle settimane festive conferma questa interpretazione. Le dieci settimane holiday presenti nel campione si concentrano in \textbf{febbraio}, \textbf{settembre}, \textbf{novembre} e \textbf{dicembre}. Tra queste, le più rilevanti in termini di livello delle vendite sono il \textbf{26 novembre 2010} e il \textbf{25 novembre 2011}, entrambe con valori superiori a \textbf{65 milioni}. Viceversa, il \textbf{31 dicembre 2010} costituisce una holiday week associata a un valore relativamente basso, pari a circa \textbf{40,43 milioni}, e rientra addirittura tra le settimane con vendite minori dell’intero campione. Ciò implica che l’effetto holiday non è univocamente positivo: alcune festività producono forti espansioni della domanda, mentre altre coincidono con settimane di drastico ridimensionamento. Questo aspetto è perfettamente coerente con il comportamento delle serie business, in cui eventi diversi possono influenzare le vendite in direzioni opposte.
+
+Nel complesso, l’analisi della stagionalità e dell’holiday effect porta a tre conclusioni principali. In primo luogo, la serie aggregata presenta una \textbf{stagionalità annuale marcata}, con livelli sistematicamente più elevati negli ultimi mesi dell’anno e un minimo relativo all’inizio di gennaio. In secondo luogo, tale configurazione si ripete con notevole regolarità nelle diverse annualità del campione, il che suggerisce che si tratti di una componente strutturale e non di una circostanza occasionale. In terzo luogo, le settimane festive presentano in media vendite più elevate e una maggiore variabilità rispetto alle settimane ordinarie, ma l’informazione contenuta nella variabile \texttt{IsHoliday} non esaurisce l’intero contenuto calendariale della serie, dal momento che alcune delle settimane più rilevanti non risultano formalmente etichettate come holiday. Da un punto di vista previsivo, queste evidenze suggeriscono che la futura modellazione dovrà includere sia una componente stagionale annuale sia un trattamento esplicito degli effetti holiday, eventualmente arricchito con informazioni calendariali più specifiche rispetto alla sola variabile binaria disponibile nel dataset.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\subsection{Eterogeneità tra store e department}
+
+L’analisi condotta finora sulla serie aggregata ha consentito di descrivere il comportamento medio del sistema Walmart, ma una rappresentazione complessiva può mascherare differenze rilevanti tra le unità elementari del dataset. Per questa ragione, il passo successivo consiste nello studio dell’eterogeneità interna tra store, department e combinazioni \texttt{Store--Dept}. In un problema di forecasting, tale verifica è metodologicamente cruciale: se le serie presentano livelli medi, volatilità e qualità del dato molto differenti, allora la scelta dell’unità previsiva non può essere lasciata implicita, ma deve essere motivata sulla base di evidenze empiriche.
+
+A questo scopo, per ciascuno store e per ciascun department sono stati calcolati indicatori sintetici di livello e dispersione: vendite totali, vendite medie, mediana, deviazione standard, minimo, massimo, numerosità delle osservazioni e coefficiente di variazione, definito come rapporto tra deviazione standard e media. Quest’ultimo indicatore risulta particolarmente utile perché consente di confrontare la volatilità relativa tra unità caratterizzate da scale di vendita differenti. In parallelo, l’analisi è stata estesa anche alle serie elementari \texttt{Store--Dept}, così da valutare quanto l’eterogeneità aumenti al diminuire del livello di aggregazione.
+
+\paragraph{Eterogeneità tra store.}
+I risultati mostrano una notevole dispersione del contributo dei singoli store alle vendite complessive. Come evidenziato in Figura~\ref{fig:store_total}, gli store con maggiore peso economico sono lo \textbf{store 20}, lo \textbf{store 4} e lo \textbf{store 14}, tutti con vendite totali superiori ai \textbf{288 milioni} nel periodo osservato. In particolare, lo store 20 raggiunge un totale di circa \textbf{301,4 milioni}, seguito molto da vicino dallo store 4 con \textbf{299,5 milioni}. All’estremo opposto, gli store 33, 44 e 5 contribuiscono in misura molto più contenuta, con valori compresi tra circa \textbf{37} e \textbf{45 milioni}. La distanza tra gli estremi indica quindi che il peso economico dei punti vendita non è affatto omogeneo e che alcuni store svolgono un ruolo nettamente dominante nel totale del campione.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 193616.png}
+    \caption{Vendite totali per store.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+
+Una struttura analoga emerge considerando il livello medio delle vendite, riportato in Figura~\ref{fig:store_mean}. Anche in questo caso, gli store 20, 4, 14, 13 e 2 si collocano ai primi posti, con medie per osservazione comprese tra circa \textbf{26 mila} e \textbf{29 mila}. Gli store meno performanti mostrano invece valori medi nettamente inferiori, in diversi casi inferiori a \textbf{10 mila}. Ciò suggerisce che l’eterogeneità non dipende soltanto dal numero di osservazioni disponibili per store, ma rifletta una differenza strutturale nei livelli di vendita.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 193633.png}
+    \caption{Vendite medie per store.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+
+Anche sul piano della volatilità relativa i punti vendita appaiono molto differenziati. La Figura~\ref{fig:store_cv} mostra che il coefficiente di variazione varia in misura non trascurabile tra store, con valori generalmente compresi tra poco più di \textbf{1,0} e oltre \textbf{2,2}. In particolare, lo \textbf{store 3} presenta il valore più elevato, pari a circa \textbf{2,24}, seguito dagli store 44 e 38. Al contrario, gli store 23, 11 e 6 risultano tra i più stabili in termini relativi, con coefficienti prossimi a \textbf{1,06--1,08}. Questo significa che non solo i punti vendita differiscono nel livello medio, ma anche nella regolarità del loro comportamento: alcuni sono caratterizzati da una dinamica relativamente prevedibile, altri da una dispersione molto più ampia rispetto al loro livello centrale.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 193655.png}
+    \caption{Volatilità relativa per store.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+
+\paragraph{Eterogeneità tra department.}
+La dispersione risulta ancora più marcata a livello di department. La Figura~\ref{fig:dept_total} evidenzia che alcuni reparti concentrano una quota molto elevata delle vendite complessive: il \textbf{department 92} supera i \textbf{483 milioni}, seguito dal \textbf{95} con circa \textbf{449 milioni} e dal \textbf{38} con oltre \textbf{393 milioni}. Al contrario, nella parte bassa della distribuzione compaiono department con volumi quasi nulli o addirittura negativi, come il \textbf{department 47}, il cui totale aggregato risulta negativo. Questa evidenza è particolarmente importante, perché suggerisce che il dataset contenga reparti con natura economica molto diversa: alcuni rappresentano driver fondamentali delle vendite Walmart, mentre altri hanno un ruolo marginale o presentano una forte incidenza di resi e rettifiche.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 193710.png}
+    \caption{Top 15 department per vendite totali.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+Il confronto sulle vendite medie conferma tale quadro. Come mostrato in Figura~\ref{fig:dept_mean}, i department 92, 95 e 38 presentano livelli medi estremamente elevati, superiori rispettivamente a \textbf{75 mila}, \textbf{69 mila} e \textbf{61 mila}. Anche il department 72 mostra una media molto alta, ma accompagnata da una dispersione superiore rispetto agli altri reparti di vertice. Al lato opposto della distribuzione compaiono diversi department con medie estremamente basse, in alcuni casi prossime allo zero o negative. Da un punto di vista modellistico, ciò implica che trattare in modo uniforme tutti i department sarebbe improprio, poiché la scala delle serie e la loro interpretazione economica cambiano radicalmente da un reparto all’altro.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 193729.png}
+    \caption{Top 15 department per vendite medie.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+L’analisi della volatilità relativa rafforza ulteriormente questa conclusione. La Figura~\ref{fig:dept_cv} mostra che alcuni department presentano coefficienti di variazione estremamente elevati. In particolare, il \textbf{department 59} registra un coefficiente pari a circa \textbf{2,87}, seguito dal \textbf{99} con \textbf{2,65}. Valori così alti indicano che, per questi reparti, la deviazione standard supera di gran lunga il livello medio, segnalando una dinamica fortemente irregolare. All’opposto, alcuni department molto rilevanti in termini economici, come il \textbf{38}, il \textbf{40} e il \textbf{95}, mostrano coefficienti sensibilmente più bassi, suggerendo una struttura più regolare e quindi potenzialmente più semplice da modellare. In sintesi, il department rappresenta una dimensione di forte eterogeneità sia nel livello sia nella variabilità.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 193743.png}
+    \caption{Top 15 department per volatilità relativa.}
+    \label{fig:placeholder}
+\end{figure}
+
+6
+\paragraph{Eterogeneità al livello Store--Dept.}
+Il grado massimo di disaggregazione è rappresentato dalle \textbf{3331 serie} corrispondenti alle combinazioni \texttt{Store--Dept}. A questo livello il dataset mostra una struttura fortemente asimmetrica. La distribuzione delle vendite medie per serie, riportata in Figura~\ref{fig:sd_mean_dist}, presenta infatti una marcata concentrazione nei valori bassi e una lunga coda destra. Ciò significa che la maggior parte delle serie store-dipartimento ha un livello medio relativamente contenuto, mentre un numero limitato di combinazioni concentra volumi eccezionalmente elevati. In termini probabilistici, la distribuzione risulta quindi fortemente right-skewed, aspetto che rende poco rappresentativa una descrizione basata esclusivamente su medie globali.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 195005.png}
+    \caption{Distribuzione delle vendite medie per serie Store--Dept.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+L’esame delle singole combinazioni di maggior peso conferma la concentrazione dei volumi. Le serie più grandi sono quasi tutte associate al \textbf{department 92}, distribuito in store ad alta capacità commerciale: ad esempio, la combinazione \texttt{Store 14 -- Dept 92} raggiunge vendite totali pari a circa \textbf{26,1 milioni}, con una media settimanale di oltre \textbf{182 mila}. Anche le combinazioni \texttt{Store 2 -- Dept 92}, \texttt{Store 20 -- Dept 92} e \texttt{Store 13 -- Dept 92} si collocano su livelli comparabili. A questi si aggiungono alcune serie appartenenti al \textbf{department 95}, anch’esse caratterizzate da livelli medi molto elevati. Questa concentrazione implica che una parte rilevante del fatturato complessivo derivi da un numero relativamente ridotto di serie.
+
+Al lato opposto della distribuzione compaiono invece molte combinazioni di dimensione minima o addirittura con totale negativo. Le serie meno rilevanti sono dominate dal \textbf{department 47} e, in misura minore, dal \textbf{department 72}. Ad esempio, \texttt{Store 35 -- Dept 47} presenta un totale di circa \textbf{-3567}, mentre \texttt{Store 1 -- Dept 47} e \texttt{Store 10 -- Dept 47} mostrano anch’esse totali negativi. Questi risultati sono di particolare interesse perché indicano che alcune combinazioni non descrivono una vera serie di vendita nel senso usuale del termine, ma piuttosto un processo dominato da rettifiche, resi o osservazioni residuali. Ciò rende tali serie poco adatte a una modellazione previsiva standard.
+
+L’eterogeneità si manifesta anche sul piano della volatilità relativa. Le serie con coefficiente di variazione più elevato coincidono spesso con combinazioni caratterizzate da media nulla o molto prossima allo zero, come \texttt{Store 9 -- Dept 78}, \texttt{Store 16 -- Dept 78} e \texttt{Store 21 -- Dept 48}. In questi casi il coefficiente di variazione perde in parte la sua interpretabilità, poiché la divisione per una media quasi nulla genera valori estremamente elevati o non finiti. Questo aspetto è tecnicamente rilevante: il coefficiente di variazione è uno strumento utile per confrontare la volatilità relativa, ma diventa instabile quando il denominatore è prossimo a zero o negativo. Di conseguenza, le serie con livello medio quasi nullo devono essere trattate con cautela e non possono essere confrontate direttamente con le serie economicamente rilevanti.
+
+Un ulteriore elemento di criticità deriva dalla presenza di zeri e valori negativi. L’analisi mostra che \textbf{61 serie Store--Dept} presentano almeno uno zero, mentre \textbf{376 serie} contengono almeno un’osservazione negativa. In particolare, alcune combinazioni risultano fortemente problematiche: ad esempio, \texttt{Store 35 -- Dept 80} contiene \textbf{25} osservazioni negative, mentre \texttt{Store 35 -- Dept 47} ne contiene \textbf{20}. Anche \texttt{Store 10 -- Dept 47} e \texttt{Store 39 -- Dept 19} mostrano una presenza non trascurabile di valori negativi. Questa concentrazione delle anomalie in un numero limitato ma non marginale di serie suggerisce che l’eterogeneità del dataset non sia solo economica, ma anche qualitativa.
+
+Per visualizzare concretamente la varietà dei comportamenti al livello più disaggregato, sono state selezionate alcune serie rappresentative, riportate in Figura~\ref{fig:selected_series}. Il pannello \textit{High Sales} mostra una serie ad alto livello medio e relativamente persistente, coerente con una struttura commerciale forte. Il pannello \textit{Negative Values} evidenzia invece una serie in cui i valori negativi compaiono con frequenza non trascurabile, alterando significativamente il profilo temporale. Il pannello \textit{High Volatility} rappresenta una dinamica molto irregolare, con oscillazioni ampie rispetto al livello medio. Infine, il caso etichettato come \textit{Stable} deriva dalla selezione automatica basata sul coefficiente di variazione minimo, ma in realtà corrisponde a una serie con media negativa e numerosità ridotta; ciò conferma che, in presenza di medie prossime a zero o negative, il solo coefficiente di variazione non è sufficiente per identificare una serie davvero stabile da un punto di vista economico.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 195054.png}
+    \caption{Serie Store--Dept rappresentative dell’eterogeneità del dataset.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+
+Nel complesso, l’analisi mostra in modo netto che il dataset Walmart è \textbf{fortemente eterogeneo} sia tra store sia tra department, e ancora di più al livello delle singole combinazioni \texttt{Store--Dept}. Le differenze non riguardano soltanto il peso economico delle unità, ma anche la loro volatilità, la presenza di osservazioni negative, la frequenza di valori nulli e, più in generale, la qualità statistica delle serie. Questa evidenza ha una conseguenza metodologica diretta: una strategia previsiva unica applicata indistintamente a tutte le serie elementari risulterebbe difficilmente giustificabile. Al contrario, i risultati suggeriscono la necessità di valutare con attenzione il livello di aggregazione più appropriato, distinguendo tra serie economicamente rilevanti e sufficientemente regolari, che possono costituire buoni candidati per il forecasting, e serie marginali o fortemente anomale, per le quali potrebbe essere opportuno adottare trattamenti specifici o addirittura escluderle dalla modellazione principale.
+
+
+
+
+\subsection{Outlier, valori negativi e qualità del dato}
+
+L’ultima fase dell’analisi esplorativa è stata dedicata alla valutazione della qualità del dato, con particolare attenzione alla presenza di valori negativi, osservazioni nulle e outlier. Questo passaggio è metodologicamente essenziale, poiché la presenza di anomalie può alterare sia l’interpretazione descrittiva della serie sia la stima dei modelli previsivi. In un dataset di vendite come quello in esame, infatti, osservazioni estreme possono riflettere fenomeni economicamente plausibili, come picchi promozionali o festività, ma anche rettifiche contabili, resi o irregolarità amministrative. Di conseguenza, l’obiettivo di questa sezione non è soltanto quantificare tali casi, ma anche comprenderne la distribuzione e valutarne il significato in relazione alla struttura del dataset.
+
+Il punto di partenza è costituito dalla distribuzione complessiva della variabile \texttt{Weekly\_Sales}. Le statistiche descrittive riportate nella Tabella~\ref{tab:weekly_sales_quality} mostrano una distribuzione fortemente asimmetrica a destra: la media, pari a circa \textbf{15\,981}, è più che doppia rispetto alla mediana, pari a \textbf{7612}, mentre il massimo raggiunge \textbf{693\,099}, a fronte di un minimo pari a \textbf{-4989}. Anche la deviazione standard, pari a circa \textbf{22\,711}, è molto elevata rispetto ai quartili centrali, segnalando la presenza di una coda destra lunga e di osservazioni estreme di notevole intensità.
+
+\begin{table}[H]
+\centering
+\caption{Indicatori descrittivi e di qualità della variabile \texttt{Weekly\_Sales}}
+\label{tab:weekly_sales_quality}
+\begin{tabular}{lr}
+\toprule
+\textbf{Indicatore} & \textbf{Valore} \\
+\midrule
+Numero totale osservazioni & 421\,570 \\
+Media & 15\,981 \\
+Mediana & 7\,612 \\
+Deviazione standard & 22\,711 \\
+Minimo & -4\,989 \\
+Massimo & 693\,099 \\
+Primo quartile & 2\,080 \\
+Terzo quartile & 20\,206 \\
+Vendite uguali a zero & 73 \\
+Percentuale vendite uguali a zero & 0.0173\% \\
+Vendite negative & 1\,285 \\
+Percentuale vendite negative & 0.305\% \\
+Lower bound IQR & -25\,110 \\
+Upper bound IQR & 47\,395 \\
+Numero lower outlier & 0 \\
+Numero upper outlier & 35\,521 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Gli istogrammi riportati nelle Figure~\ref{fig:hist_all_quality} e~\ref{fig:hist_99_quality} confermano questa struttura. Nel grafico complessivo, la massa principale delle osservazioni è concentrata su livelli relativamente bassi, mentre una lunga coda si estende verso destra fino a valori molto elevati. Limitando l’osservazione al \textit{99° percentile}, la forma della distribuzione diventa più leggibile e mette in evidenza che la forte asimmetria non dipende soltanto da pochi casi eccezionali, ma rappresenta una caratteristica strutturale della variabile. In altri termini, il dataset è composto da molte osservazioni di piccola o media entità e da una quota più ridotta, ma non trascurabile, di valori elevati.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 204706.png}
+    \caption{Distribuzione complessiva di \texttt{Weekly\_Sales}.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 204753.png}
+    \caption{Distribuzione di \texttt{Weekly\_Sales} fino al 99° percentile.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+Il boxplot complessivo, mostrato in Figura~\ref{fig:box_all_quality}, rende ancora più evidente il grado di eterogeneità della distribuzione. La scatola centrale risulta compressa nella parte bassa della scala, mentre un numero molto elevato di osservazioni viene identificato come potenziale outlier superiore. Dal punto di vista tecnico, questo comportamento è coerente con una distribuzione fortemente right-skewed, nella quale la presenza di molti valori alti non costituisce necessariamente un’anomalia in senso stretto, ma riflette anche la diversa scala di vendita tra store e department.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 204840.png}
+    \caption{Boxplot complessivo di \texttt{Weekly\_Sales}.}
+    \label{fig:placeholder}
+\end{figure}
+
+Un primo elemento di qualità del dato riguarda la presenza di osservazioni nulle e negative. I valori nulli sono \textbf{73}, pari a una quota trascurabile del dataset (\textbf{0,0173\%}), mentre i valori negativi sono \textbf{1285}, corrispondenti a circa lo \textbf{0,305\%} delle osservazioni. Dal punto di vista quantitativo, queste frequenze sono contenute; tuttavia, la loro presenza non può essere ignorata, soprattutto perché una vendita negativa non è interpretabile come una normale osservazione di domanda. In un contesto retail, essa è più plausibilmente riconducibile a resi, rettifiche o correzioni contabili. Di conseguenza, tali casi assumono rilevanza non tanto per la loro numerosità assoluta, quanto per il loro significato economico e per il potenziale impatto sulla stima di modelli sensibili ai valori estremi o alle distribuzioni non gaussiane.
+
+Per identificare sistematicamente gli outlier è stato adottato il criterio dell’intervallo interquartile. Con \(Q_1 = 2080\), \(Q_3 = 20206\) e \(IQR = 18126\), si ottengono una soglia inferiore pari a \textbf{-25\,110} e una soglia superiore pari a \textbf{47\,395}. Poiché il minimo osservato del dataset è \textbf{-4989}, nessuna osservazione rientra nella categoria dei \textit{lower outlier}; al contrario, \textbf{35\,521 osservazioni}, pari a circa l’\textbf{8,43\%} del totale, superano la soglia superiore e vengono quindi classificate come \textit{upper outlier}. Questo risultato è statisticamente corretto rispetto alla regola IQR, ma va interpretato con cautela. Nel nostro contesto, infatti, una parte rilevante degli \textit{upper outlier} non rappresenta necessariamente errori o anomalie, bensì osservazioni appartenenti a department strutturalmente caratterizzati da vendite elevate. In altri termini, il criterio IQR applicato globalmente alla variabile \texttt{Weekly\_Sales} tende a classificare come outlier anche valori coerenti con reparti ad alto fatturato.
+
+L’analisi delle osservazioni estreme conferma questa interpretazione. Le venti vendite positive più elevate si concentrano quasi interamente nel \textbf{department 72}, soprattutto nelle settimane del \textbf{26 novembre 2010} e del \textbf{25 novembre 2011}, entrambe holiday weeks. Il valore massimo assoluto del dataset, pari a \textbf{693\,099}, si osserva infatti per la combinazione \texttt{Store 10 -- Dept 72} nella settimana del \textbf{26 novembre 2010}. Analogamente, i valori più elevati successivi si distribuiscono ancora nello stesso department e nelle stesse finestre temporali. Ciò suggerisce che gli estremi superiori non siano dispersi casualmente, ma concentrati in specifici reparti e in date economicamente molto rilevanti, presumibilmente associate a eventi commerciali di forte impatto. Sul lato opposto, le osservazioni più negative si concentrano soprattutto nel \textbf{department 47}, con valori minimi distribuiti su più store e in settimane non necessariamente festive. Questo rafforza l’idea che le vendite negative siano riconducibili a fenomeni amministrativi o di reso, più che a variazioni ordinarie della domanda.
+
+Per comprendere se le anomalie si distribuiscano in modo uniforme oppure si concentrino in specifiche unità del dataset, esse sono state localizzate per store, department e combinazione \texttt{Store--Dept}. A livello di store, la Figura~\ref{fig:store_anomalies_quality} mostra che i punti vendita con la maggiore incidenza di outlier sono gli store \textbf{4}, \textbf{20}, \textbf{14} e \textbf{10}, con percentuali comprese tra circa il \textbf{19\%} e il \textbf{22\%}. Si tratta, non casualmente, degli store che nella sezione precedente risultavano anche tra i più rilevanti in termini di volume complessivo di vendite. Questa coincidenza suggerisce che, almeno in parte, l’elevata incidenza di outlier sia l’effetto della grande scala economica di questi store e non necessariamente di un deterioramento della qualità del dato.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 204954.png}
+    \caption{Top 15 store per incidenza di outlier.}
+    \label{fig:placeholder}
+\end{figure}
+
+La concentrazione delle anomalie è ancora più evidente a livello di department. La Figura~\ref{fig:dept_anomalies_quality} mostra che i reparti con la maggiore incidenza di outlier sono il \textbf{38}, il \textbf{95} e il \textbf{92}, tutti con percentuali superiori al \textbf{60\%}. Seguono i department \textbf{65}, \textbf{72}, \textbf{90}, \textbf{40} e \textbf{2}, anch’essi caratterizzati da incidenze molto elevate. Anche in questo caso, il risultato va letto in chiave strutturale: si tratta degli stessi department che, nella sezione sull’eterogeneità, risultavano ai vertici per volume e media delle vendite. Pertanto, l’elevata quota di \textit{upper outlier} non segnala necessariamente una scarsa qualità del dato, ma evidenzia piuttosto il limite di una soglia globale applicata a serie con scale molto diverse.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 205034.png}
+    \caption{Top 15 department per incidenza di outlier.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+
+La localizzazione temporale delle anomalie, sintetizzata in Figura~\ref{fig:anomaly_dates_quality}, mostra infine che esse non sono distribuite uniformemente lungo il campione. Le date con il maggior numero di outlier coincidono infatti con \textbf{24 dicembre 2010}, \textbf{23 dicembre 2011}, \textbf{16 dicembre 2011}, \textbf{17 dicembre 2010}, \textbf{25 novembre 2011} e \textbf{26 novembre 2010}. Si tratta precisamente delle settimane che, nell’analisi della serie aggregata, avevano evidenziato i picchi più pronunciati. Questo risultato è di particolare importanza tecnica: indica che gli outlier superiori non sono rumore casuale, ma sono fortemente concentrati in specifiche date calendariali ad alta intensità commerciale. Pertanto, almeno una parte rilevante delle osservazioni classificate come estreme riflette componenti stagionali e holiday effects, e non veri errori o anomalie da eliminare automaticamente.
+
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 205125.png}
+    \caption{Date con il maggior numero di outlier.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+
+L’analisi a livello di serie \texttt{Store--Dept} rende ancora più chiaro questo punto. Molte delle combinazioni con incidenza di outlier pari al \textbf{100\%} corrispondono a serie appartenenti ai department ad altissimo volume, come \texttt{Store 1 -- Dept 38}, \texttt{Store 1 -- Dept 40}, \texttt{Store 1 -- Dept 90}, \texttt{Store 1 -- Dept 91}, \texttt{Store 1 -- Dept 92}, \texttt{Store 1 -- Dept 93} e \texttt{Store 1 -- Dept 95}. Dal punto di vista matematico, ciò significa che ogni osservazione di queste serie supera la soglia globale di \textbf{47\,395}. Questo risultato non va interpretato come un’indicazione di scarsa qualità della singola serie, ma come una prova del fatto che il criterio IQR globale non è appropriato per confrontare simultaneamente reparti a bassa e alta scala. In termini pratici, il test individua come outlier tutte le osservazioni di serie naturalmente collocate nella parte alta della distribuzione.
+
+La Figura~\ref{fig:problem_series_quality} mostra quattro esempi di serie classificate come fortemente anomale. In tutti i casi si osservano livelli sistematicamente elevati, con profili relativamente regolari e picchi compatibili con dinamiche commerciali plausibili. Questo conferma che una classificazione puramente statistica degli outlier, se applicata senza distinzione tra gruppi omogenei, rischia di confondere eterogeneità strutturale e anomalia vera e propria.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-04-23 205309.png}
+    \caption{Esempi di serie Store--Dept con elevata incidenza di osservazioni classificate come outlier.}
+    \label{fig:placeholder}
+\end{figure}
+
+
+Nel complesso, l’analisi della qualità del dato consente di trarre tre conclusioni principali. In primo luogo, la variabile \texttt{Weekly\_Sales} presenta una distribuzione fortemente asimmetrica, con una lunga coda destra e una quota non trascurabile di osservazioni elevate. In secondo luogo, i valori nulli e negativi sono quantitativamente pochi, ma economicamente rilevanti, soprattutto perché si concentrano in department specifici e possono riflettere resi o correzioni contabili. In terzo luogo, il criterio IQR applicato globalmente identifica un numero elevato di \textit{upper outlier}, ma tali osservazioni non devono essere interpretate automaticamente come errori: una parte rilevante di esse coincide con department ad alta scala e con settimane festive o stagionalmente rilevanti. Di conseguenza, in vista della modellazione previsiva, l’evidenza raccolta suggerisce di evitare procedure di pulizia meccanica basate su soglie globali e di preferire, piuttosto, un trattamento delle anomalie contestualizzato per gruppo omogeneo, eventualmente distinguendo tra veri valori irregolari e picchi economicamente informativi.
+
+
+\end{document}
