@@ -43,7 +43,7 @@ if (!dir.exists("output")) dir.create("output")
 # 1. IMPORTAZIONE DEL DATASET E COSTRUZIONE DELLA SERIE AGGREGATA
 ############################################################
 
-walmart <- read_csv("data/wallmart_sales.csv")
+walmart <- read_csv("wallmart_sales.csv")
 
 sales_agg <- walmart %>%
   group_by(Date) %>%
