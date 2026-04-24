@@ -1,0 +1,245 @@
+############################################################
+# FILE: 07_sarima_serie_imputata.R
+#
+# OBIETTIVO:
+# Stimare un modello SARIMA sulla serie temporale imputata
+# e valutarne la capacità previsiva.
+#
+# LOGICA:
+# 1. importazione della serie imputata;
+# 2. costruzione della serie temporale settimanale;
+# 3. divisione in training e test;
+# 4. stima del modello SARIMA;
+# 5. diagnostica dei residui;
+# 6. forecast sulle ultime settimane;
+# 7. valutazione delle performance previsive.
+############################################################
+
+
+############################################################
+# 0. LIBRERIE
+############################################################
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(forecast)
+library(tseries)
+
+# Creazione cartella output se non esiste
+if (!dir.exists("output")) dir.create("output")
+
+
+############################################################
+# 1. IMPORTAZIONE DELLA SERIE IMPUTATA
+############################################################
+# Si assume che il file contenga almeno:
+# - Date
+# - Sales
+############################################################
+
+serie_imputata <- read_csv("serie_imputata.csv")
+
+# Controllo rapido
+str(serie_imputata)
+head(serie_imputata)
+
+
+############################################################
+# 2. ORDINAMENTO TEMPORALE
+############################################################
+
+serie_imputata <- serie_imputata %>%
+  arrange(Date)
+
+
+############################################################
+# 3. COSTRUZIONE DELLA SERIE TEMPORALE
+############################################################
+# Poiché i dati sono settimanali, usiamo frequency = 52.
+# Questa è la scelta standard per serie weekly.
+############################################################
+
+y <- ts(serie_imputata$Sales, frequency = 52)
+
+# Grafico preliminare della serie
+autoplot(y) +
+  labs(
+    title = "Serie imputata",
+    x = "Tempo",
+    y = "Vendite"
+  ) +
+  theme_minimal()
+
+
+############################################################
+# 4. DIVISIONE TRAIN / TEST
+############################################################
+# Usiamo le ultime 12 settimane come test set.
+############################################################
+
+h <- 12
+
+train <- head(y, length(y) - h)
+test  <- tail(y, h)
+
+length(train)
+length(test)
+
+
+############################################################
+# 5. ANALISI PRELIMINARE DEL TRAINING SET
+############################################################
+
+autoplot(train) +
+  labs(
+    title = "Training set della serie imputata",
+    x = "Tempo",
+    y = "Vendite"
+  ) +
+  theme_minimal()
+
+ggAcf(train) + ggtitle("ACF del training set")
+ggPacf(train) + ggtitle("PACF del training set")
+
+# Test ADF come controllo preliminare
+adf.test(train)
+
+
+############################################################
+# 6. STIMA DEL MODELLO SARIMA
+############################################################
+# seasonal = TRUE consente di selezionare una componente
+# stagionale esplicita.
+#
+# stepwise = FALSE e approximation = FALSE rendono la ricerca
+# più accurata, anche se più lenta.
+############################################################
+
+fit_sarima <- auto.arima(
+  train,
+  seasonal = TRUE,
+  stepwise = FALSE,
+  approximation = FALSE,
+  trace = TRUE
+)
+
+summary(fit_sarima)
+
+
+############################################################
+# 7. DIAGNOSTICA DEI RESIDUI
+############################################################
+# Il modello è adeguato se i residui risultano vicini a rumore
+# bianco, cioè senza autocorrelazione residua significativa.
+############################################################
+
+checkresiduals(fit_sarima)
+
+res_sarima <- residuals(fit_sarima)
+
+autoplot(res_sarima) +
+  labs(
+    title = "Residui del modello SARIMA",
+    x = "Tempo",
+    y = "Residui"
+  ) +
+  theme_minimal()
+
+ggAcf(res_sarima) + ggtitle("ACF dei residui del SARIMA")
+
+
+############################################################
+# 8. FORECAST
+############################################################
+
+fc_sarima <- forecast(fit_sarima, h = h)
+
+autoplot(fc_sarima) +
+  autolayer(test, series = "Test") +
+  labs(
+    title = "Forecast SARIMA sulla serie imputata",
+    x = "Tempo",
+    y = "Vendite"
+  ) +
+  theme_minimal()
+
+
+############################################################
+# 9. TABELLA PREVISIONI
+############################################################
+
+forecast_table <- tibble(
+  Date = tail(serie_imputata$Date, h),
+  Actual = as.numeric(test),
+  Forecast = as.numeric(fc_sarima$mean),
+  Lower_80 = as.numeric(fc_sarima$lower[, 1]),
+  Upper_80 = as.numeric(fc_sarima$upper[, 1]),
+  Lower_95 = as.numeric(fc_sarima$lower[, 2]),
+  Upper_95 = as.numeric(fc_sarima$upper[, 2])
+)
+
+forecast_table
+
+
+############################################################
+# 10. ACCURATEZZA PREVISIONALE
+############################################################
+# Calcoliamo MAE, RMSE e MAPE sul test set.
+############################################################
+
+accuracy(fc_sarima, test)
+
+errors <- as.numeric(test) - as.numeric(fc_sarima$mean)
+
+MAE  <- mean(abs(errors), na.rm = TRUE)
+RMSE <- sqrt(mean(errors^2, na.rm = TRUE))
+MAPE <- mean(abs(errors / as.numeric(test)), na.rm = TRUE) * 100
+
+accuracy_table <- tibble(
+  Metrica = c("MAE", "RMSE", "MAPE"),
+  Valore = c(MAE, RMSE, MAPE)
+)
+
+accuracy_table
+
+
+############################################################
+# 11. GRAFICO FINALE: TRAIN, TEST E FORECAST
+############################################################
+
+plot_df <- tibble(
+  Date = serie_imputata$Date,
+  Sales = as.numeric(y),
+  Tipo = c(rep("Train", length(train)), rep("Test", length(test)))
+)
+
+forecast_df <- tibble(
+  Date = tail(serie_imputata$Date, h),
+  Forecast = as.numeric(fc_sarima$mean)
+)
+
+ggplot() +
+  geom_line(data = plot_df,
+            aes(x = Date, y = Sales, linetype = Tipo),
+            linewidth = 0.8) +
+  geom_line(data = forecast_df,
+            aes(x = Date, y = Forecast),
+            linewidth = 1) +
+  labs(
+    title = "SARIMA sulla serie imputata: training, test e forecast",
+    x = "Data",
+    y = "Vendite"
+  ) +
+  scale_y_continuous(labels = comma) +
+  theme_minimal()
+
+
+############################################################
+# 12. SALVATAGGIO OUTPUT
+############################################################
+
+write_csv(forecast_table, "output/forecast_sarima_serie_imputata.csv")
+write_csv(accuracy_table, "output/accuracy_sarima_serie_imputata.csv")
+saveRDS(fit_sarima, "output/fit_sarima_serie_imputata.rds")
