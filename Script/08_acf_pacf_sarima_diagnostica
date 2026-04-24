@@ -1,1 +1,243 @@
+############################################################
+# FILE: 08_acf_pacf_sarima_diagnostica.R
+#
+# OBIETTIVO:
+# Analizzare la struttura di autocorrelazione della serie
+# imputata e verificare la bontà del modello SARIMA finale.
+#
+# IN PARTICOLARE:
+# 1. ACF e PACF della serie imputata;
+# 2. ACF e PACF della serie differenziata;
+# 3. stima del SARIMA;
+# 4. ACF dei residui del SARIMA finale.
+############################################################
 
+
+############################################################
+# 0. LIBRERIE
+############################################################
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(forecast)
+library(tseries)
+
+# Creazione cartella output se non esiste
+if (!dir.exists("output")) dir.create("output")
+
+
+############################################################
+# 1. IMPORTAZIONE DELLA SERIE IMPUTATA
+############################################################
+# Il file deve contenere almeno:
+# - Date
+# - Sales
+############################################################
+
+serie_imputata <- read_csv("serie_imputata.csv")
+
+serie_imputata <- serie_imputata %>%
+  arrange(Date)
+
+str(serie_imputata)
+head(serie_imputata)
+
+
+############################################################
+# 2. COSTRUZIONE DELLA SERIE TEMPORALE
+############################################################
+# Dati settimanali: frequency = 52
+############################################################
+
+y <- ts(serie_imputata$Sales, frequency = 52)
+
+autoplot(y) +
+  labs(
+    title = "Serie imputata",
+    x = "Tempo",
+    y = "Vendite"
+  ) +
+  theme_minimal()
+
+
+############################################################
+# 3. ACF E PACF DELLA SERIE IMPUTATA
+############################################################
+# Questa parte serve a verificare la presenza di dipendenza
+# seriale e a leggere eventuali segnali di non stazionarietà
+# o stagionalità.
+############################################################
+
+acf_original <- ggAcf(y) +
+  ggtitle("ACF della serie imputata")
+
+pacf_original <- ggPacf(y) +
+  ggtitle("PACF della serie imputata")
+
+acf_original
+pacf_original
+
+
+############################################################
+# 4. TEST DI STAZIONARIETÀ
+############################################################
+# Il test ADF aiuta a valutare se la serie sia stazionaria.
+# Non va interpretato da solo, ma insieme ai grafici.
+############################################################
+
+adf.test(y)
+
+
+############################################################
+# 5. DIFFERENZIAZIONE DELLA SERIE
+############################################################
+# Applichiamo:
+# - differenziazione ordinaria di ordine 1
+# - differenziazione stagionale di ordine 1 con lag 52
+#
+# NOTA:
+# qui le costruiamo per analisi esplorativa. Il modello finale
+# può poi selezionare automaticamente d e D.
+############################################################
+
+y_diff_1 <- diff(y, differences = 1)
+
+y_diff_seasonal <- diff(y, lag = 52, differences = 1)
+
+# Differenziazione ordinaria + stagionale
+y_diff_both <- diff(diff(y, differences = 1), lag = 52, differences = 1)
+
+
+############################################################
+# 6. GRAFICI DELLE SERIE DIFFERENZIATE
+############################################################
+
+autoplot(y_diff_1) +
+  labs(
+    title = "Serie differenziata (ordine 1)",
+    x = "Tempo",
+    y = "Differenza"
+  ) +
+  theme_minimal()
+
+autoplot(y_diff_seasonal) +
+  labs(
+    title = "Serie differenziata stagionalmente (lag 52)",
+    x = "Tempo",
+    y = "Differenza stagionale"
+  ) +
+  theme_minimal()
+
+autoplot(y_diff_both) +
+  labs(
+    title = "Serie differenziata ordinaria e stagionale",
+    x = "Tempo",
+    y = "Differenza"
+  ) +
+  theme_minimal()
+
+
+############################################################
+# 7. ACF E PACF DELLA SERIE DIFFERENZIATA
+############################################################
+# Per il progetto, in genere conviene commentare soprattutto
+# la serie differenziata ordinaria+stagionale, perché è quella
+# più vicina alla struttura del SARIMA.
+############################################################
+
+acf_diff <- ggAcf(y_diff_both) +
+  ggtitle("ACF della serie differenziata ordinaria e stagionale")
+
+pacf_diff <- ggPacf(y_diff_both) +
+  ggtitle("PACF della serie differenziata ordinaria e stagionale")
+
+acf_diff
+pacf_diff
+
+
+############################################################
+# 8. TEST ADF SULLA SERIE DIFFERENZIATA
+############################################################
+
+adf.test(na.omit(y_diff_both))
+
+
+############################################################
+# 9. STIMA DEL MODELLO SARIMA FINALE
+############################################################
+# seasonal = TRUE permette di stimare un modello con
+# componente stagionale.
+############################################################
+
+fit_sarima <- auto.arima(
+  y,
+  seasonal = TRUE,
+  stepwise = FALSE,
+  approximation = FALSE,
+  trace = TRUE
+)
+
+summary(fit_sarima)
+
+
+############################################################
+# 10. DIAGNOSTICA DEI RESIDUI DEL SARIMA
+############################################################
+# Questa è la parte cruciale: i residui devono risultare
+# il più possibile simili a rumore bianco.
+############################################################
+
+checkresiduals(fit_sarima)
+
+res_sarima <- residuals(fit_sarima)
+
+autoplot(res_sarima) +
+  labs(
+    title = "Residui del modello SARIMA",
+    x = "Tempo",
+    y = "Residui"
+  ) +
+  theme_minimal()
+
+
+############################################################
+# 11. ACF DEI RESIDUI DEL SARIMA FINALE
+############################################################
+# Se il modello è ben specificato, l'ACF dei residui non deve
+# mostrare picchi sistematici significativi.
+############################################################
+
+acf_residuals <- ggAcf(res_sarima) +
+  ggtitle("ACF dei residui del SARIMA finale")
+
+acf_residuals
+
+# Facoltativo: anche PACF dei residui
+pacf_residuals <- ggPacf(res_sarima) +
+  ggtitle("PACF dei residui del SARIMA finale")
+
+pacf_residuals
+
+
+############################################################
+# 12. SALVATAGGIO GRAFICI (FACOLTATIVO)
+############################################################
+# Se vuoi salvare i grafici per la relazione, usa ggsave().
+############################################################
+
+ggsave("output/acf_serie_imputata.png", acf_original, width = 8, height = 5)
+ggsave("output/pacf_serie_imputata.png", pacf_original, width = 8, height = 5)
+
+ggsave("output/acf_serie_differenziata.png", acf_diff, width = 8, height = 5)
+ggsave("output/pacf_serie_differenziata.png", pacf_diff, width = 8, height = 5)
+
+ggsave("output/acf_residui_sarima.png", acf_residuals, width = 8, height = 5)
+ggsave("output/pacf_residui_sarima.png", pacf_residuals, width = 8, height = 5)
+
+
+############################################################
+# 13. SALVATAGGIO MODELLO
+############################################################
+
+saveRDS(fit_sarima, "output/fit_sarima_finale.rds")
