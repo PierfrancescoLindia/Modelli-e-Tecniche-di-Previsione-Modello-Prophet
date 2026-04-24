@@ -1,0 +1,240 @@
+############################################################
+# FILE: visualizzazione_outlier_serie.R
+#
+# OBIETTIVO:
+# Visualizzare gli outlier su una serie temporale come punti
+# evidenziati, così da poterli identificare e poi imputare.
+#
+# LOGICA:
+# - si parte dal dataset Walmart Sales;
+# - si seleziona una serie temporale omogenea;
+# - si applica una regola statistica semplice (IQR);
+# - gli outlier vengono mostrati sul grafico come punti rossi.
+#
+# NOTA METODOLOGICA:
+# Per imputare correttamente, è preferibile lavorare su serie
+# omogenee (ad esempio una combinazione Store-Dept) oppure
+# sulla serie aggregata, ma non su tutte le osservazioni del
+# dataset indistintamente.
+############################################################
+
+
+############################################################
+# 0. LIBRERIE
+############################################################
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+
+############################################################
+# 1. IMPORTAZIONE DEL DATASET
+############################################################
+
+walmart <- read_csv("wallmart_sales.csv")
+
+
+############################################################
+# 2. SCELTA DELLA SERIE DA ANALIZZARE
+############################################################
+# Hai due possibilità:
+#
+# A) serie aggregata totale (somma delle vendite per settimana)
+# B) serie singola Store-Dept
+#
+# SCOMMENTA SOLO IL BLOCCO CHE TI INTERESSA
+############################################################
+
+
+############################
+# A) SERIE AGGREGATA TOTALE
+############################
+
+serie <- walmart %>%
+  group_by(Date) %>%
+  summarise(
+    Sales = sum(Weekly_Sales, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(Date)
+
+
+#########################################
+# B) SERIE SINGOLA STORE-DEPT (facoltativa)
+#########################################
+# Esempio: Store 1 - Dept 38
+# Se vuoi lavorare su una serie specifica, commenta il blocco A
+# e usa questo.
+
+# store_scelto <- 1
+# dept_scelto  <- 38
+#
+# serie <- walmart %>%
+#   filter(Store == store_scelto, Dept == dept_scelto) %>%
+#   select(Date, Sales = Weekly_Sales) %>%
+#   arrange(Date)
+
+
+############################################################
+# 3. IDENTIFICAZIONE DEGLI OUTLIER CON CRITERIO IQR
+############################################################
+# Regola:
+# lower bound = Q1 - 1.5 * IQR
+# upper bound = Q3 + 1.5 * IQR
+#
+# In molte serie di vendita i lower outlier possono essere pochi
+# o assenti, mentre gli upper outlier possono essere numerosi.
+############################################################
+
+Q1 <- quantile(serie$Sales, 0.25, na.rm = TRUE)
+Q3 <- quantile(serie$Sales, 0.75, na.rm = TRUE)
+IQR_value <- IQR(serie$Sales, na.rm = TRUE)
+
+lower_bound <- Q1 - 1.5 * IQR_value
+upper_bound <- Q3 + 1.5 * IQR_value
+
+serie <- serie %>%
+  mutate(
+    outlier_flag = case_when(
+      Sales < lower_bound ~ "Lower outlier",
+      Sales > upper_bound ~ "Upper outlier",
+      TRUE ~ "Regular"
+    )
+  )
+
+# Controllo rapido
+table(serie$outlier_flag)
+
+
+############################################################
+# 4. TABELLA CON LE OSSERVAZIONI ANOMALE
+############################################################
+# Questa tabella ti permette di vedere esattamente quali date
+# sono state identificate come outlier.
+############################################################
+
+outlier_table <- serie %>%
+  filter(outlier_flag != "Regular")
+
+outlier_table
+
+
+############################################################
+# 5. GRAFICO DELLA SERIE CON OUTLIER EVIDENZIATI
+############################################################
+# La linea mostra l'intera serie.
+# I punti rossi evidenziano gli outlier.
+############################################################
+
+plot_outlier <- ggplot(serie, aes(x = Date, y = Sales)) +
+  geom_line(linewidth = 0.7, color = "black") +
+  geom_point(
+    data = serie %>% filter(outlier_flag != "Regular"),
+    aes(x = Date, y = Sales),
+    color = "red",
+    size = 2.5
+  ) +
+  labs(
+    title = "Serie temporale con outlier evidenziati",
+    subtitle = "Gli outlier identificati con criterio IQR sono mostrati in rosso",
+    x = "Data",
+    y = "Vendite"
+  ) +
+  scale_y_continuous(labels = comma) +
+  theme_minimal()
+
+plot_outlier
+
+
+############################################################
+# 6. VERSIONE CON ETICHETTE SUI PUNTI ANOMALI
+############################################################
+# Se vuoi vedere anche la data accanto ai punti, puoi usare
+# geom_text(). Attenzione: se gli outlier sono molti, il grafico
+# può diventare poco leggibile.
+############################################################
+
+plot_outlier_labels <- ggplot(serie, aes(x = Date, y = Sales)) +
+  geom_line(linewidth = 0.7, color = "black") +
+  geom_point(
+    data = serie %>% filter(outlier_flag != "Regular"),
+    color = "red",
+    size = 2.5
+  ) +
+  geom_text(
+    data = serie %>% filter(outlier_flag != "Regular"),
+    aes(label = Date),
+    vjust = -0.8,
+    size = 3
+  ) +
+  labs(
+    title = "Serie temporale con outlier ed etichette",
+    subtitle = "Ogni punto rosso rappresenta una data anomala",
+    x = "Data",
+    y = "Vendite"
+  ) +
+  scale_y_continuous(labels = comma) +
+  theme_minimal()
+
+plot_outlier_labels
+
+
+############################################################
+# 7. SALVATAGGIO DELLA TABELLA DEGLI OUTLIER
+############################################################
+# Utile se vuoi poi costruire uno script di imputazione.
+############################################################
+
+write_csv(outlier_table, "outlier_serie_identificati.csv")
+
+
+############################################################
+# 8. IMPUTAZIONE SEMPLICE (FACOLTATIVA)
+############################################################
+# Qui ti mostro una soluzione base:
+# ogni outlier viene sostituito con la media delle osservazioni
+# adiacenti precedente e successiva.
+#
+# Questa è una soluzione semplice, utile per fare prove.
+# In una relazione conviene però spiegare e motivare bene la
+# scelta del criterio di imputazione.
+############################################################
+
+serie_imputed <- serie
+
+for (i in 2:(nrow(serie_imputed) - 1)) {
+  if (serie_imputed$outlier_flag[i] != "Regular") {
+    serie_imputed$Sales[i] <-
+      mean(c(serie_imputed$Sales[i - 1], serie_imputed$Sales[i + 1]), na.rm = TRUE)
+  }
+}
+
+# Grafico confronto originale vs imputata
+plot_imputation <- ggplot() +
+  geom_line(data = serie, aes(x = Date, y = Sales), linewidth = 0.6, color = "grey50") +
+  geom_line(data = serie_imputed, aes(x = Date, y = Sales), linewidth = 0.9, color = "blue") +
+  geom_point(
+    data = serie %>% filter(outlier_flag != "Regular"),
+    aes(x = Date, y = Sales),
+    color = "red",
+    size = 2.2
+  ) +
+  labs(
+    title = "Confronto tra serie originale e serie imputata",
+    subtitle = "Grigio = originale, Blu = imputata, Rosso = outlier originali",
+    x = "Data",
+    y = "Vendite"
+  ) +
+  scale_y_continuous(labels = comma) +
+  theme_minimal()
+
+plot_imputation
+
+
+############################################################
+# 9. SALVATAGGIO DELLA SERIE IMPUTATA
+############################################################
+
+write_csv(serie_imputed, "serie_imputata.csv")
