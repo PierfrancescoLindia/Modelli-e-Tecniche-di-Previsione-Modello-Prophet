@@ -1,26 +1,16 @@
 ############################################################
-# PROGETTO: Analisi e Forecasting del dataset Walmart Sales
-# CORSO: Modelli e Tecniche di Previsione
-#
-# FILE: 06_outlier_valori_negativi_qualita_dato.R
+# FILE: 07_outlier_reali_serie_aggregata.R
 #
 # OBIETTIVO:
-# Questo script sviluppa il punto 1.6 dell'analisi esplorativa,
-# concentrandosi su outlier, valori negativi e qualità del dato.
+# Identificare gli outlier della serie aggregata distinguendo
+# tra:
+# - outlier giustificabili da calendario/stagionalità;
+# - outlier reali da imputare.
 #
-# In particolare, il codice permette di:
-# 1. descrivere la distribuzione di Weekly_Sales;
-# 2. quantificare vendite nulle, negative e valori estremi;
-# 3. identificare outlier con un criterio statistico semplice;
-# 4. localizzare le anomalie per store, department e serie Store-Dept;
-# 5. produrre evidenze utili per decidere come trattare i dati nella
-#    successiva fase di forecasting.
-#
-# MOTIVAZIONE:
-# In un problema di forecasting è fondamentale verificare la presenza
-# di osservazioni anomale, valori negativi o comportamenti irregolari,
-# poiché tali elementi possono influenzare fortemente sia l'analisi
-# descrittiva sia le performance dei modelli previsivi.
+# OUTPUT:
+# 1. tabella completa degli outlier;
+# 2. serie finale pronta per Prophet e SARIMA;
+# 3. grafici diagnostici.
 ############################################################
 
 
@@ -32,6 +22,7 @@ library(readr)
 library(dplyr)
 library(ggplot2)
 library(scales)
+library(lubridate)
 
 # Creazione cartella output se non esiste
 if (!dir.exists("output")) dir.create("output")
@@ -45,484 +36,277 @@ walmart <- read_csv("wallmart_sales.csv")
 
 
 ############################################################
-# 2. STATISTICHE DESCRITTIVE DI BASE DI WEEKLY_SALES
+# 2. COSTRUZIONE DELLA SERIE AGGREGATA
+############################################################
+# Manteniamo anche IsHoliday aggregato, utile per Prophet.
 ############################################################
 
-# Prima di identificare anomalie specifiche, descriviamo la variabile
-# Weekly_Sales nel suo complesso.
-
-summary(walmart$Weekly_Sales)
-
-weekly_sales_summary <- tibble(
-  Indicatore = c(
-    "Numero osservazioni",
-    "Media",
-    "Mediana",
-    "Deviazione standard",
-    "Minimo",
-    "Massimo",
-    "Primo quartile",
-    "Terzo quartile"
-  ),
-  Valore = c(
-    length(walmart$Weekly_Sales),
-    mean(walmart$Weekly_Sales, na.rm = TRUE),
-    median(walmart$Weekly_Sales, na.rm = TRUE),
-    sd(walmart$Weekly_Sales, na.rm = TRUE),
-    min(walmart$Weekly_Sales, na.rm = TRUE),
-    max(walmart$Weekly_Sales, na.rm = TRUE),
-    quantile(walmart$Weekly_Sales, 0.25, na.rm = TRUE),
-    quantile(walmart$Weekly_Sales, 0.75, na.rm = TRUE)
-  )
-)
-
-weekly_sales_summary
+serie <- walmart %>%
+  group_by(Date) %>%
+  summarise(
+    Sales = sum(Weekly_Sales, na.rm = TRUE),
+    IsHoliday = any(IsHoliday),
+    .groups = "drop"
+  ) %>%
+  arrange(Date)
 
 
 ############################################################
-# 3. DISTRIBUZIONE DI WEEKLY_SALES
+# 3. IDENTIFICAZIONE DEGLI OUTLIER CON CRITERIO IQR
 ############################################################
 
-# Istogramma complessivo delle vendite.
-# La distribuzione può risultare molto asimmetrica; per questo motivo
-# salviamo sia una visualizzazione generale sia una versione limitata
-# ai percentili più centrali.
-
-plot_hist_all <- ggplot(walmart, aes(x = Weekly_Sales)) +
-  geom_histogram(bins = 60) +
-  labs(
-    title = "Distribuzione complessiva di Weekly_Sales",
-    x = "Vendite settimanali",
-    y = "Frequenza"
-  ) +
-  scale_x_continuous(labels = comma) +
-  theme_minimal()
-
-plot_hist_all
-
-# Limitiamo la visualizzazione al 99° percentile per leggere meglio
-# il corpo centrale della distribuzione.
-p99 <- quantile(walmart$Weekly_Sales, 0.99, na.rm = TRUE)
-
-plot_hist_99 <- ggplot(walmart %>% filter(Weekly_Sales <= p99),
-                       aes(x = Weekly_Sales)) +
-  geom_histogram(bins = 60) +
-  labs(
-    title = "Distribuzione di Weekly_Sales fino al 99° percentile",
-    x = "Vendite settimanali",
-    y = "Frequenza"
-  ) +
-  scale_x_continuous(labels = comma) +
-  theme_minimal()
-
-plot_hist_99
-
-# Boxplot complessivo
-plot_box_all <- ggplot(walmart, aes(y = Weekly_Sales)) +
-  geom_boxplot() +
-  labs(
-    title = "Boxplot complessivo di Weekly_Sales",
-    y = "Vendite settimanali"
-  ) +
-  scale_y_continuous(labels = comma) +
-  theme_minimal()
-
-plot_box_all
-
-
-############################################################
-# 4. QUANTIFICAZIONE DI ZERI E VALORI NEGATIVI
-############################################################
-
-# In questa parte quantifichiamo esplicitamente il numero di
-# osservazioni nulle e negative.
-
-n_zero <- sum(walmart$Weekly_Sales == 0, na.rm = TRUE)
-n_negative <- sum(walmart$Weekly_Sales < 0, na.rm = TRUE)
-
-pct_zero <- 100 * n_zero / nrow(walmart)
-pct_negative <- 100 * n_negative / nrow(walmart)
-
-zero_negative_summary <- tibble(
-  Categoria = c("Vendite uguali a zero", "Vendite negative"),
-  Numero = c(n_zero, n_negative),
-  Percentuale = c(pct_zero, pct_negative)
-)
-
-zero_negative_summary
-
-
-############################################################
-# 5. IDENTIFICAZIONE DEGLI OUTLIER CON CRITERIO IQR
-############################################################
-
-# Usiamo il criterio classico basato sull'intervallo interquartile:
-# outlier inferiori: Q1 - 1.5*IQR
-# outlier superiori: Q3 + 1.5*IQR
-
-Q1 <- quantile(walmart$Weekly_Sales, 0.25, na.rm = TRUE)
-Q3 <- quantile(walmart$Weekly_Sales, 0.75, na.rm = TRUE)
-IQR_value <- IQR(walmart$Weekly_Sales, na.rm = TRUE)
+Q1 <- quantile(serie$Sales, 0.25, na.rm = TRUE)
+Q3 <- quantile(serie$Sales, 0.75, na.rm = TRUE)
+IQR_value <- IQR(serie$Sales, na.rm = TRUE)
 
 lower_bound <- Q1 - 1.5 * IQR_value
 upper_bound <- Q3 + 1.5 * IQR_value
 
-outlier_summary <- tibble(
-  Indicatore = c("Q1", "Q3", "IQR", "Lower bound", "Upper bound"),
-  Valore = c(Q1, Q3, IQR_value, lower_bound, upper_bound)
-)
-
-outlier_summary
-
-# Creiamo una variabile che segnala il tipo di osservazione
-walmart_outliers <- walmart %>%
+serie <- serie %>%
   mutate(
-    outlier_iqr = case_when(
-      Weekly_Sales < lower_bound ~ "Lower outlier",
-      Weekly_Sales > upper_bound ~ "Upper outlier",
+    raw_outlier_flag = case_when(
+      Sales < lower_bound ~ "Lower outlier",
+      Sales > upper_bound ~ "Upper outlier",
       TRUE ~ "Regular"
     )
   )
 
-# Conteggio outlier
-outlier_counts <- walmart_outliers %>%
-  count(outlier_iqr) %>%
-  mutate(percentuale = 100 * n / sum(n))
-
-outlier_counts
+table(serie$raw_outlier_flag)
 
 
 ############################################################
-# 6. OSSERVAZIONI PIÙ ESTREME
+# 4. IDENTIFICAZIONE DEI PERIODI "GIUSTIFICABILI"
+############################################################
+# Logica:
+# non tutti gli outlier sono errori.
+# Consideriamo "giustificabili" gli outlier in periodi coerenti
+# con il profilo commerciale emerso nell'EDA.
+#
+# Regole adottate:
+# - settimane holiday dichiarate dal dataset;
+# - finestra Black Friday / Thanksgiving: 20-30 novembre;
+# - finestra natalizia: 8-25 dicembre;
+# - fine anno / post-Natale: 26-31 dicembre;
+# - fine gennaio post-holiday: 20-31 gennaio;
+# - finestra pasquale: 1-10 aprile.
+#
+# Tutto ciò che cade fuori da queste finestre viene trattato
+# come vero outlier candidato all'imputazione.
 ############################################################
 
-# Elenchiamo le osservazioni con vendite massime e minime e le prime
-# anomalie in ordine crescente e decrescente.
-
-top_positive_values <- walmart %>%
-  arrange(desc(Weekly_Sales)) %>%
-  head(20)
-
-top_negative_values <- walmart %>%
-  arrange(Weekly_Sales) %>%
-  head(20)
-
-top_positive_values
-top_negative_values
-
-
-############################################################
-# 7. LOCALIZZAZIONE DELLE ANOMALIE PER STORE
-############################################################
-
-# Verifichiamo se zeri, negativi e outlier si concentrino in alcuni
-# store più che in altri.
-
-store_anomalies <- walmart_outliers %>%
-  group_by(Store) %>%
-  summarise(
-    n_obs = n(),
-    n_zero = sum(Weekly_Sales == 0, na.rm = TRUE),
-    n_negative = sum(Weekly_Sales < 0, na.rm = TRUE),
-    n_lower_outlier = sum(outlier_iqr == "Lower outlier", na.rm = TRUE),
-    n_upper_outlier = sum(outlier_iqr == "Upper outlier", na.rm = TRUE),
-    pct_negative = 100 * n_negative / n_obs,
-    pct_outlier_total = 100 * (n_lower_outlier + n_upper_outlier) / n_obs,
-    .groups = "drop"
-  ) %>%
-  arrange(desc(pct_outlier_total))
-
-store_anomalies
+serie <- serie %>%
+  mutate(
+    month_num = month(Date),
+    day_num   = day(Date),
+    justified_period = case_when(
+      IsHoliday ~ "Holiday week",
+      month_num == 11 & day_num >= 20 & day_num <= 30 ~ "Black Friday / Thanksgiving window",
+      month_num == 12 & day_num >= 8  & day_num <= 25 ~ "Christmas sales window",
+      month_num == 12 & day_num >= 26 & day_num <= 31 ~ "Year-end adjustment window",
+      month_num == 1  & day_num >= 20 & day_num <= 31 ~ "Late January post-holiday window",
+      month_num == 4  & day_num >= 1  & day_num <= 10 ~ "Easter window",
+      TRUE ~ "Outside justified periods"
+    )
+  )
 
 
 ############################################################
-# 8. LOCALIZZAZIONE DELLE ANOMALIE PER DEPARTMENT
+# 5. DISTINZIONE TRA OUTLIER GIUSTIFICATI E OUTLIER REALI
+############################################################
+# Un vero outlier è:
+# - classificato come outlier IQR
+# - e fuori dai periodi commercialmente giustificabili
 ############################################################
 
-dept_anomalies <- walmart_outliers %>%
-  group_by(Dept) %>%
-  summarise(
-    n_obs = n(),
-    n_zero = sum(Weekly_Sales == 0, na.rm = TRUE),
-    n_negative = sum(Weekly_Sales < 0, na.rm = TRUE),
-    n_lower_outlier = sum(outlier_iqr == "Lower outlier", na.rm = TRUE),
-    n_upper_outlier = sum(outlier_iqr == "Upper outlier", na.rm = TRUE),
-    pct_negative = 100 * n_negative / n_obs,
-    pct_outlier_total = 100 * (n_lower_outlier + n_upper_outlier) / n_obs,
-    .groups = "drop"
-  ) %>%
-  arrange(desc(pct_outlier_total))
+serie <- serie %>%
+  mutate(
+    real_outlier = if_else(
+      raw_outlier_flag != "Regular" &
+        justified_period == "Outside justified periods",
+      TRUE,
+      FALSE
+    ),
+    final_outlier_class = case_when(
+      raw_outlier_flag == "Regular" ~ "Regular",
+      raw_outlier_flag != "Regular" & !real_outlier ~ "Justified outlier",
+      raw_outlier_flag != "Regular" & real_outlier ~ "Real outlier"
+    )
+  )
 
-dept_anomalies
-
-
-############################################################
-# 9. LOCALIZZAZIONE DELLE ANOMALIE PER SERIE STORE-DEPT
-############################################################
-
-store_dept_anomalies <- walmart_outliers %>%
-  group_by(Store, Dept) %>%
-  summarise(
-    n_obs = n(),
-    n_zero = sum(Weekly_Sales == 0, na.rm = TRUE),
-    n_negative = sum(Weekly_Sales < 0, na.rm = TRUE),
-    n_lower_outlier = sum(outlier_iqr == "Lower outlier", na.rm = TRUE),
-    n_upper_outlier = sum(outlier_iqr == "Upper outlier", na.rm = TRUE),
-    pct_negative = 100 * n_negative / n_obs,
-    pct_outlier_total = 100 * (n_lower_outlier + n_upper_outlier) / n_obs,
-    .groups = "drop"
-  ) %>%
-  arrange(desc(pct_outlier_total), desc(n_negative))
-
-store_dept_anomalies
-
-top_problematic_series <- store_dept_anomalies %>%
-  head(20)
-
-top_problematic_series
+table(serie$final_outlier_class)
 
 
 ############################################################
-# 10. DISTRIBUZIONE TEMPORALE DELLE ANOMALIE
+# 6. TABELLA COMPLETA DEGLI OUTLIER
 ############################################################
 
-# Verifichiamo se le anomalie si concentrino in certi periodi del tempo.
+outlier_table_complete <- serie %>%
+  filter(raw_outlier_flag != "Regular") %>%
+  select(
+    Date, Sales, IsHoliday,
+    raw_outlier_flag,
+    justified_period,
+    final_outlier_class
+  )
 
-anomalies_by_date <- walmart_outliers %>%
-  group_by(Date) %>%
-  summarise(
-    n_obs = n(),
-    n_negative = sum(Weekly_Sales < 0, na.rm = TRUE),
-    n_lower_outlier = sum(outlier_iqr == "Lower outlier", na.rm = TRUE),
-    n_upper_outlier = sum(outlier_iqr == "Upper outlier", na.rm = TRUE),
-    n_total_outlier = n_lower_outlier + n_upper_outlier,
-    .groups = "drop"
-  ) %>%
-  arrange(desc(n_total_outlier), desc(n_negative))
+outlier_table_complete
 
-anomalies_by_date
-
-top_anomaly_dates <- anomalies_by_date %>%
-  head(20)
-
-top_anomaly_dates
+write_csv(outlier_table_complete,
+          "output/outlier_table_classificati.csv")
 
 
 ############################################################
-# 11. GRAFICI DI SUPPORTO
+# 7. GRAFICO: OUTLIER GIUSTIFICATI VS OUTLIER REALI
 ############################################################
 
-# Anomalie per store: top 15
-top_store_anomalies <- store_anomalies %>%
-  head(15)
-
-plot_store_anomalies <- ggplot(top_store_anomalies,
-                               aes(x = reorder(factor(Store), pct_outlier_total),
-                                   y = pct_outlier_total)) +
-  geom_col() +
-  coord_flip() +
-  labs(
-    title = "Top 15 store per incidenza di outlier",
-    x = "Store",
-    y = "Percentuale di outlier"
+plot_outlier_classified <- ggplot(serie, aes(x = Date, y = Sales)) +
+  geom_line(linewidth = 0.7, color = "black") +
+  geom_point(
+    data = serie %>% filter(final_outlier_class == "Justified outlier"),
+    color = "orange",
+    size = 2.5
   ) +
-  theme_minimal()
-
-plot_store_anomalies
-
-# Anomalie per department: top 15
-top_dept_anomalies <- dept_anomalies %>%
-  head(15)
-
-plot_dept_anomalies <- ggplot(top_dept_anomalies,
-                              aes(x = reorder(factor(Dept), pct_outlier_total),
-                                  y = pct_outlier_total)) +
-  geom_col() +
-  coord_flip() +
-  labs(
-    title = "Top 15 department per incidenza di outlier",
-    x = "Department",
-    y = "Percentuale di outlier"
+  geom_point(
+    data = serie %>% filter(final_outlier_class == "Real outlier"),
+    color = "red",
+    size = 2.8
   ) +
-  theme_minimal()
-
-plot_dept_anomalies
-
-# Numero totale di outlier per data: top 20
-plot_top_anomaly_dates <- ggplot(top_anomaly_dates,
-                                 aes(x = reorder(as.character(Date), n_total_outlier),
-                                     y = n_total_outlier)) +
-  geom_col() +
-  coord_flip() +
   labs(
-    title = "Date con il maggior numero di outlier",
+    title = "Serie aggregata con classificazione degli outlier",
+    subtitle = "Arancione = outlier giustificati, Rosso = outlier reali",
     x = "Data",
-    y = "Numero di outlier"
-  ) +
-  theme_minimal()
-
-plot_top_anomaly_dates
-
-
-############################################################
-# 12. SERIE ESEMPLIFICATIVE CON ANOMALIE
-############################################################
-
-# Selezioniamo alcune tra le serie Store-Dept più problematiche per
-# poterle visualizzare direttamente.
-
-selected_problem_series <- top_problematic_series %>%
-  slice(1:4) %>%
-  mutate(Series_Label = paste("Store", Store, "- Dept", Dept))
-
-selected_problem_data <- walmart %>%
-  inner_join(selected_problem_series %>% select(Store, Dept, Series_Label),
-             by = c("Store", "Dept"))
-
-plot_problem_series <- ggplot(selected_problem_data,
-                              aes(x = Date, y = Weekly_Sales)) +
-  geom_line() +
-  facet_wrap(~ Series_Label, scales = "free_y") +
-  labs(
-    title = "Esempi di serie Store-Dept con anomalie rilevanti",
-    x = "Data",
-    y = "Vendite settimanali"
+    y = "Vendite"
   ) +
   scale_y_continuous(labels = comma) +
   theme_minimal()
 
-plot_problem_series
+plot_outlier_classified
+
+ggsave("output/grafico_outlier_classificati.png",
+       plot_outlier_classified, width = 10, height = 6)
 
 
 ############################################################
-# 13. TABELLA RIASSUNTIVA FINALE
+# 8. IMPUTAZIONE SOLO DEI VERI OUTLIER
+############################################################
+# Imputiamo solo gli outlier reali.
+# Gli outlier giustificati vengono lasciati invariati.
+#
+# Metodo:
+# media tra osservazione precedente e successiva.
 ############################################################
 
-quality_summary <- tibble(
-  Indicatore = c(
-    "Numero totale osservazioni",
-    "Vendite uguali a zero",
-    "Percentuale vendite uguali a zero",
-    "Vendite negative",
-    "Percentuale vendite negative",
-    "Lower bound IQR",
-    "Upper bound IQR",
-    "Numero lower outlier",
-    "Numero upper outlier"
-  ),
-  Valore = c(
-    nrow(walmart),
-    n_zero,
-    pct_zero,
-    n_negative,
-    pct_negative,
-    lower_bound,
-    upper_bound,
-    sum(walmart_outliers$outlier_iqr == "Lower outlier"),
-    sum(walmart_outliers$outlier_iqr == "Upper outlier")
+serie_model <- serie %>%
+  mutate(
+    Sales_original = Sales,
+    Sales_model = Sales
   )
-)
 
-quality_summary
-
-
-############################################################
-# 14. SALVATAGGIO OUTPUT
-############################################################
-
-write_csv(weekly_sales_summary, "output/weekly_sales_summary.csv")
-write_csv(zero_negative_summary, "output/zero_negative_summary.csv")
-write_csv(outlier_summary, "output/outlier_summary.csv")
-write_csv(outlier_counts, "output/outlier_counts.csv")
-write_csv(store_anomalies, "output/store_anomalies.csv")
-write_csv(dept_anomalies, "output/dept_anomalies.csv")
-write_csv(store_dept_anomalies, "output/store_dept_anomalies.csv")
-write_csv(top_problematic_series, "output/top_problematic_series.csv")
-write_csv(anomalies_by_date, "output/anomalies_by_date.csv")
-write_csv(top_anomaly_dates, "output/top_anomaly_dates.csv")
-write_csv(top_positive_values, "output/top_positive_values.csv")
-write_csv(top_negative_values, "output/top_negative_values.csv")
-write_csv(quality_summary, "output/quality_summary.csv")
+for (i in 2:(nrow(serie_model) - 1)) {
+  if (serie_model$real_outlier[i]) {
+    serie_model$Sales_model[i] <-
+      mean(c(serie_model$Sales_model[i - 1],
+             serie_model$Sales_model[i + 1]),
+           na.rm = TRUE)
+  }
+}
 
 
 ############################################################
-# 15. SALVATAGGIO GRAFICI
+# 9. GRAFICO CONFRONTO SERIE ORIGINALE VS SERIE FINALE
 ############################################################
 
-ggsave(
-  filename = "output/plot_hist_all.png",
-  plot = plot_hist_all,
-  width = 10,
-  height = 6,
-  dpi = 300
-)
+plot_model_series <- ggplot() +
+  geom_line(data = serie_model,
+            aes(x = Date, y = Sales_original),
+            linewidth = 0.6, color = "grey60") +
+  geom_line(data = serie_model,
+            aes(x = Date, y = Sales_model),
+            linewidth = 0.9, color = "blue") +
+  geom_point(
+    data = serie_model %>% filter(final_outlier_class == "Justified outlier"),
+    aes(x = Date, y = Sales_original),
+    color = "orange",
+    size = 2.3
+  ) +
+  geom_point(
+    data = serie_model %>% filter(final_outlier_class == "Real outlier"),
+    aes(x = Date, y = Sales_original),
+    color = "red",
+    size = 2.5
+  ) +
+  labs(
+    title = "Serie originale e serie finale per i modelli",
+    subtitle = "Blu = serie usata per Prophet/SARIMA; Rosso = veri outlier imputati; Arancione = outlier mantenuti",
+    x = "Data",
+    y = "Vendite"
+  ) +
+  scale_y_continuous(labels = comma) +
+  theme_minimal()
 
-ggsave(
-  filename = "output/plot_hist_99.png",
-  plot = plot_hist_99,
-  width = 10,
-  height = 6,
-  dpi = 300
-)
+plot_model_series
 
-ggsave(
-  filename = "output/plot_box_all.png",
-  plot = plot_box_all,
-  width = 8,
-  height = 6,
-  dpi = 300
-)
-
-ggsave(
-  filename = "output/plot_store_anomalies.png",
-  plot = plot_store_anomalies,
-  width = 10,
-  height = 8,
-  dpi = 300
-)
-
-ggsave(
-  filename = "output/plot_dept_anomalies.png",
-  plot = plot_dept_anomalies,
-  width = 10,
-  height = 8,
-  dpi = 300
-)
-
-ggsave(
-  filename = "output/plot_top_anomaly_dates.png",
-  plot = plot_top_anomaly_dates,
-  width = 10,
-  height = 8,
-  dpi = 300
-)
-
-ggsave(
-  filename = "output/plot_problem_series.png",
-  plot = plot_problem_series,
-  width = 12,
-  height = 8,
-  dpi = 300
-)
+ggsave("output/grafico_serie_finale_modelli.png",
+       plot_model_series, width = 10, height = 6)
 
 
 ############################################################
-# 16. CONCLUSIONI OPERATIVE DELLA FASE 1.6
+# 10. DATASET FINALE PRONTO PER I MODELLI
 ############################################################
-
-# Al termine di questo script dovremmo essere in grado di rispondere
-# alle seguenti domande:
+# Questo file è quello che poi userai per:
+# - Prophet  -> colonna Sales_model come y
+# - SARIMA   -> colonna Sales_model come serie finale
 #
-# - La distribuzione di Weekly_Sales è simmetrica oppure fortemente
-#   asimmetrica?
-# - Quante osservazioni negative o nulle sono presenti?
-# - Gli outlier sono numerosi oppure marginali?
-# - Le anomalie si concentrano in particolari store, department o date?
-# - Esistono serie Store-Dept particolarmente problematiche?
-# - È necessario trattare o monitorare tali osservazioni prima della
-#   modellazione previsiva?
-#
-# Questa fase conclude l'analisi esplorativa e fornisce la base per
-# la successiva definizione del problema previsivo, della strategia di
-# validazione e dei modelli da confrontare.
+# Manteniamo anche:
+# - Sales_original
+# - IsHoliday
+# - etichette di classificazione
+# così hai piena tracciabilità metodologica.
 ############################################################
+
+dataset_modelli <- serie_model %>%
+  select(
+    Date,
+    Sales_original,
+    Sales_model,
+    IsHoliday,
+    raw_outlier_flag,
+    justified_period,
+    final_outlier_class,
+    real_outlier
+  )
+
+dataset_modelli
+
+write_csv(dataset_modelli,
+          "output/dataset_serie_aggregata_per_modelli.csv")
+
+
+############################################################
+# 11. VERSIONE MINIMALE PER SARIMA E PROPHET
+############################################################
+# File essenziale:
+# - Date
+# - Sales
+# - IsHoliday
+############################################################
+
+dataset_modelli_min <- dataset_modelli %>%
+  transmute(
+    Date,
+    Sales = Sales_model,
+    IsHoliday
+  )
+
+write_csv(dataset_modelli_min,
+          "output/dataset_serie_aggregata_modelli_min.csv")
+
+
+############################################################
+# 12. CONTROLLO FINALE
+############################################################
+
+table(dataset_modelli$final_outlier_class)
+
+dataset_modelli %>%
+  filter(real_outlier)
